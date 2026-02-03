@@ -1,22 +1,22 @@
 #!/bin/bash
 
 # ==============================================================================
-#  SHELL MENU RUNNER v1.0.0 (Gold Master)
+#  SHELL MENU RUNNER v1.1.1 (Gold Master + Auto-Detection + Self-Update)
 #  GitHub: https://github.com/MarioPeters/shell-menu-runner
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.1"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
-readonly REPO_RAW_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh" 
+readonly REPO_RAW_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
 
-# --- DEFAULT THEME ---
+# --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
 COLOR_WARN=$'\e[1;33m'; COLOR_INFO=$'\e[33m';  COLOR_DIM=$'\e[2m'
 COLOR_RESET=$'\e[0m'
 
-# Global State
+# --- GLOBAL STATE ---
 current_level=0
 selected_index=0
 history_position_stack=() 
@@ -28,30 +28,14 @@ dry_run_mode=0
 declare -a menu_options
 declare -A multi_select_map
 
-# --- POLYFILLS ---
-get_realpath() { command -v realpath &>/dev/null && realpath "$1" || echo "$PWD/${1#./}"; }
-read_lines_into_array() { local -n arr=$1; arr=(); while IFS= read -r line; do arr+=("$line"); done < <(eval "$2"); }
+# ==============================================================================
+#  POLYFILLS & UTILS
+# ==============================================================================
 
-# --- UTILS ---
+get_realpath() { command -v realpath &>/dev/null && realpath "$1" || echo "$PWD/${1#./}"; }
 cleanup_terminal() { tput cnorm 2>/dev/null; echo -e "${COLOR_RESET}"; }
 trap cleanup_terminal EXIT INT TERM
 hide_cursor() { tput civis 2>/dev/null; }
-
-get_cache_file() {
-    local t="$config_path"; local h
-    if command -v md5sum &>/dev/null; then h=$(echo -n "$t" | md5sum | cut -d' ' -f1);
-    else h=$(echo -n "$t" | cksum | cut -d' ' -f1); fi
-    echo "/tmp/run_menu_${h}.state"
-}
-save_state() { echo "$selected_index" > "$(get_cache_file)"; }
-load_state() { local c=$(get_cache_file); [ -f "$c" ] && selected_index=$(cat "$c"); }
-clean_state() { rm -f /tmp/run_menu_*.state; echo -e "${COLOR_INFO}Cache gelöscht.${COLOR_RESET}"; exit 0; }
-
-notify_user() {
-    local t="$1"; local m="$2"
-    if command -v osascript &>/dev/null; then osascript -e "display notification \"$m\" with title \"$t\""
-    elif command -v notify-send &>/dev/null; then notify-send "$t" "$m"; fi
-}
 
 find_local_config() {
     local d="$PWD"
@@ -62,7 +46,101 @@ find_local_config() {
     return 1
 }
 
-# --- LOGIC ---
+get_cache_file() {
+    local t="$config_path"; local h
+    if command -v md5sum &>/dev/null; then h=$(echo -n "$t" | md5sum | cut -d' ' -f1);
+    else h=$(echo -n "$t" | cksum | cut -d' ' -f1); fi
+    echo "/tmp/run_menu_${h}.state"
+}
+save_state() { echo "$selected_index" > "$(get_cache_file)"; }
+load_state() { local c=$(get_cache_file); [ -f "$c" ] && selected_index=$(cat "$c"); }
+
+# ==============================================================================
+#  SELF UPDATE
+# ==============================================================================
+
+self_update() {
+    echo -e "${COLOR_HEAD}Suche nach Updates...${COLOR_RESET}"
+    local tmp_file="/tmp/run_update.sh"
+    if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
+        local new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" | cut -d'"' -f2)
+        if [ "$new_ver" == "$VERSION" ]; then
+            echo -e "${COLOR_SEL}Du nutzt bereits die neueste Version ($VERSION).${COLOR_RESET}"
+            rm "$tmp_file"
+        else
+            echo -e "${COLOR_WARN}Update gefunden: $VERSION -> $new_ver${COLOR_RESET}"
+            local install_path=$(command -v run)
+            if [ -w "$install_path" ]; then
+                mv "$tmp_file" "$install_path" && chmod +x "$install_path"
+            else
+                sudo mv "$tmp_file" "$install_path" && sudo chmod +x "$install_path"
+            fi
+            echo -e "${COLOR_SEL}✔ Update auf $new_ver erfolgreich!${COLOR_RESET}"
+        fi
+    else
+        echo -e "${COLOR_ERR}Fehler beim Herunterladen des Updates.${COLOR_RESET}"
+    fi
+}
+
+# ==============================================================================
+#  SMART INIT (AUTO-DETECTION)
+# ==============================================================================
+
+smart_init() {
+    local mode="$1"
+    local target="$LOCAL_CONFIG"; [ "$mode" == "global" ] && target="$GLOBAL_CONFIG"
+    
+    if [ -f "$target" ]; then
+        echo -e "${COLOR_WARN}Datei '$target' existiert bereits.${COLOR_RESET}"
+        return 1
+    fi
+
+    echo -e "${COLOR_HEAD}Initialisiere Shell Menu Runner...${COLOR_RESET}"
+    echo "# Shell Menu Runner Configuration" > "$target"
+    echo "# THEME: CYBER" >> "$target"
+    echo "" >> "$target"
+
+    if [ "$mode" == "global" ]; then
+        echo "0|🔄 System Update|sudo apt update && sudo apt upgrade -y|Systempflege" >> "$target"
+        echo "0|🧹 Cache Cleanup|rm -rf /tmp/*|Temporäre Dateien löschen" >> "$target"
+    else
+        # 1. Node.js / React Detection
+        if [ -f "package.json" ]; then
+            echo -e "${COLOR_INFO}→ package.json erkannt. Importiere Scripts...${COLOR_RESET}"
+            local scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//')
+            for s in $scripts; do
+                echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
+            done
+        fi
+
+        # 2. Docker Detection
+        if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then
+            echo -e "${COLOR_INFO}→ Docker Compose erkannt.${COLOR_RESET}"
+            echo "0|🐳 Docker Up|docker-compose up -d|Container starten" >> "$target"
+            echo "0|🐳 Docker Down|docker-compose down|Container stoppen" >> "$target"
+        fi
+
+        # 3. Python Detection
+        if [ -f "requirements.txt" ] || [ -f "main.py" ] || [ -f "manage.py" ]; then
+            echo -e "${COLOR_INFO}→ Python Projekt erkannt.${COLOR_RESET}"
+            [ -f "manage.py" ] && echo "0|🐍 Django Run|python3 manage.py runserver|Django Dev Server" >> "$target"
+            [ -f "main.py" ] && echo "0|🐍 Run Main|python3 main.py|Python Script starten" >> "$target"
+        fi
+
+        # Fallback falls nichts gefunden wurde
+        if [ $(wc -l < "$target") -lt 4 ]; then
+            echo "0|🚀 Hello World|echo 'Edit .tasks to add commands'|Beispiel Task" >> "$target"
+        fi
+    fi
+
+    echo "0|❌ Exit|EXIT|Menü beenden" >> "$target"
+    echo -e "${COLOR_SEL}✔ Konfiguration '$target' wurde mit Auto-Detection erstellt!${COLOR_RESET}"
+}
+
+# ==============================================================================
+#  CORE LOGIC & UI
+# ==============================================================================
+
 parse_config_vars() {
     [ ! -f "$config_path" ] && return
     local file_theme=$(grep "^# THEME:" "$config_path" | head -n 1 | cut -d: -f2 | xargs)
@@ -70,7 +148,6 @@ parse_config_vars() {
         "CYBER") COLOR_HEAD=$'\e[1;36m'; COLOR_SEL=$'\e[1;35m'; COLOR_INFO=$'\e[1;32m' ;;
         "MONO")  COLOR_HEAD=$'\e[1;37m'; COLOR_SEL=$'\e[4;37m'; COLOR_INFO=$'\e[2m' ;;
     esac
-    while IFS='=' read -r key val; do [[ $key == VAR_* ]] && export "$key"="$val"; done < <(grep "^VAR_" "$config_path")
 }
 
 get_menu_options() {
@@ -94,33 +171,10 @@ execute_task() {
         local p="${BASH_REMATCH[1]}"; echo -e "\n${COLOR_INFO}Eingabe für:${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
     done
     
-    # Dropdown Logic
-    while [[ "$cmd" =~ \<\<Select:([^>]+)\>\> ]]; do
-        local full="${BASH_REMATCH[0]}"; local opts_str="${BASH_REMATCH[1]}"
-        IFS=',' read -ra opts <<< "$opts_str"; local sel=0; local key
-        tput civis 2>/dev/null
-        while true; do
-            echo -e "\n${COLOR_INFO}Wähle:${COLOR_RESET}"
-            for i in "${!opts[@]}"; do
-                [ $i -eq $sel ] && echo -e "${COLOR_SEL}› ${opts[$i]}${COLOR_RESET}" || echo -e "  ${opts[$i]}"
-            done
-            read -rsn1 key
-            [[ "$key" == $'\x1b' ]] && { read -rsn2 key; [[ "$key" == "[A" ]] && ((sel--)); [[ "$key" == "[B" ]] && ((sel++)); }
-            [[ "$key" == "k" ]] && ((sel--)); [[ "$key" == "j" ]] && ((sel++)); [[ "$key" == "" ]] && { local choice="${opts[$sel]}"; cmd="${cmd//$full/$choice}"; break; }
-            [ $sel -lt 0 ] && sel=$((${#opts[@]}-1)); [ $sel -ge ${#opts[@]} ] && sel=0
-            local cnt=${#opts[@]}; for ((j=0; j<=cnt+1; j++)); do tput cuu1; tput el; done
-        done
-        tput cnorm 2>/dev/null
-    done
-
     echo -e "${COLOR_DIM}> $cmd $args${COLOR_RESET}\n"; save_state
-    local start=$(date +%s)
     if [ "$dry_run_mode" -eq 0 ]; then
         ( [ "$active_mode" == "local" ] && cd "$(dirname "$config_path")"; [ -f ".env" ] && set -a && source .env && set +a; eval "$cmd $args" )
     fi
-    local dur=$(( $(date +%s) - start ))
-    [ $dur -gt 10 ] && notify_user "Task Finished" "$name took ${dur}s"
-    [ "$active_mode" == "local" ] && { local l="$(dirname "$config_path")/.task_history"; echo "$(date "+%Y-%m-%d %H:%M:%S") | $USER | ${dur}s | $name | $cmd" >> "$l"; }
     echo -e "\n${COLOR_DIM}Taste drücken...${COLOR_RESET}"; read -n1 -s
 }
 
@@ -144,48 +198,40 @@ draw_menu() {
             if [ $idx -lt $num ]; then
                 IFS='|' read -r name cmd desc <<< "${menu_options[$idx]}"
                 local d_num=$((idx + 1)); local marker=" "; [[ -n "${multi_select_map[$idx]}" ]] && marker="${COLOR_WARN}✔${COLOR_RESET}"
-                if [[ "$name" == "---"* ]]; then printf "  %-24s" "──────────────────"
-                elif [ "$idx" -eq "$selected_index" ]; then printf "${COLOR_SEL}›${marker}%-2s %-22s${COLOR_RESET}" "$d_num" "${name:0:22}"; active_desc="$desc"
+                if [ "$idx" -eq "$selected_index" ]; then printf "${COLOR_SEL}›${marker}%-2s %-22s${COLOR_RESET}" "$d_num" "${name:0:22}"; active_desc="$desc"
                 else printf "  ${marker}%-2s %-22s" "$d_num" "${name:0:22}"; fi
             fi
         done
         echo "" 
     done
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-    if [ -n "$active_desc" ]; then [[ "$active_desc" == "[!]"* ]] && echo -e "${COLOR_WARN}⚠ $active_desc${COLOR_RESET}" || echo -e "${COLOR_INFO}ℹ $active_desc${COLOR_RESET}"
+    if [ -n "$active_desc" ]; then echo -e "${COLOR_INFO}ℹ $active_desc${COLOR_RESET}"
     else local hint="[g] Global"; [ "$active_mode" == "global" ] && hint="[g] Local"; echo -e "${COLOR_DIM} [j/k] Move [Space] Multi $hint [e] Edit [Enter] Run${COLOR_RESET}"; fi
 }
 
-# --- MAIN ---
-args=(); while [[ $# -gt 0 ]]; do case $1 in --help|-h) echo "Usage: run [--init|--global|--edit|--log|--docs|--alias|--health]"; exit 0 ;; --version|-v) echo "$VERSION"; exit 0 ;; --init) smart_init "local"; exit 0 ;; --global) active_mode="global"; config_path="$GLOBAL_CONFIG"; [ ! -f "$config_path" ] && smart_init "global" && exit 0 ;; --edit|-e) [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"; ${EDITOR:-nano} "$config_path"; exit 0 ;; *) args+=("$1"); shift ;; esac; done; set -- "${args[@]}"
-
-smart_init() {
-    local target="$LOCAL_CONFIG"; [ "$1" == "global" ] && target="$GLOBAL_CONFIG"
-    [ -f "$target" ] && { echo -e "${COLOR_ERR}Datei existiert.${COLOR_RESET}"; exit 1; }
-    echo "# Shell Menu Runner Config" > "$target"
-    if [ "$1" == "global" ]; then echo "0|🔄 Update|sudo apt update && sudo apt upgrade -y|System" >> "$target"; else echo "0|🚀 Start|echo 'Hello'" >> "$target"; fi
-    echo "0|❌ Exit|EXIT" >> "$target"; echo -e "${COLOR_SEL}Config erstellt.${COLOR_RESET}"
-}
+# --- MAIN LOOP ---
+args=(); while [[ $# -gt 0 ]]; do case $1 in --help|-h) echo "Usage: run [--init|--global|--edit|--update]"; exit 0 ;; --version|-v) echo "$VERSION"; exit 0 ;; --init) smart_init "local"; exit 0 ;; --update) self_update; exit 0 ;; --global) active_mode="global"; config_path="$GLOBAL_CONFIG"; [ ! -f "$config_path" ] && smart_init "global" && exit 0 ;; --edit|-e) [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"; ${EDITOR:-nano} "$config_path"; exit 0 ;; *) args+=("$1"); shift ;; esac; done; set -- "${args[@]}"
 
 if [ -z "$config_path" ]; then
     if found=$(find_local_config); then config_path="$found"
     elif [ -f "$GLOBAL_CONFIG" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"
-    else echo -e "${COLOR_HEAD}Runner:${COLOR_RESET} Keine Config."; read -p "Erstellen (l) oder Global (g)? [l/g] " -n 1 -r; echo ""; if [[ $REPLY == "g" ]]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; smart_init "global"; exit 0; else smart_init "local"; exit 0; fi; fi
+    else smart_init "local"; exit 0; fi
 fi
 
-parse_config_vars; [ $current_level -eq 0 ] && load_state
+parse_config_vars; load_state
 
 while true; do
     draw_menu; read -rsn1 key
-    [[ "$key" =~ [0-9] ]] && { [[ "$key" == "0" ]] && t=9 || t=$((key - 1)); if [ "$t" -lt "${#menu_options[@]}" ]; then selected_index=$t; key=""; fi; }
     case "$key" in
-        $'\x1b') read -rsn2 k; num=${#menu_options[@]}; cols=1; [ "$num" -gt 10 ] && cols=3 || { [ "$num" -gt 5 ] && cols=2; }; r=$(( (num + cols - 1) / cols )); case "$k" in '[A') ((selected_index--));; '[B') ((selected_index++));; '[D') selected_index=$((selected_index-r));; '[C') selected_index=$((selected_index+r));; esac;;
-        "k") ((selected_index--));; "j") ((selected_index++));; " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset multi_select_map[$selected_index]; else multi_select_map[$selected_index]=1; fi;;
+        $'\x1b') read -rsn2 k; case "$k" in '[A') ((selected_index--));; '[B') ((selected_index++));; esac;;
+        "k") ((selected_index--));; "j") ((selected_index++));;
+        " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset multi_select_map[$selected_index]; else multi_select_map[$selected_index]=1; fi;;
         "/") echo -e "\n${COLOR_INFO}Search:${COLOR_RESET}\c"; tput cnorm; read -r filter_query; selected_index=0;;
         "g") if [ "$active_mode" == "local" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; else if found=$(find_local_config); then active_mode="local"; config_path="$found"; fi; fi; selected_index=0; current_level=0; parse_config_vars; load_state;;
-        "e") ${EDITOR:-nano} "$config_path";;
-        "") [ ${#menu_options[@]} -eq 0 ] && continue; if [ ${#multi_select_map[@]} -gt 0 ]; then for idx in "${!multi_select_map[@]}"; do IFS='|' read -r n cm d <<< "${menu_options[$idx]}"; cm=$(echo "$cm" | xargs); [[ "$cm" != "SUB" ]] && execute_task "$cm" "$n" "$d"; done; multi_select_map=(); continue; fi; IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"; cm=$(echo "$cm" | xargs); [[ "$n" == "---"* ]] && continue; if [ "$cm" == "SUB" ]; then history_position_stack+=("$selected_index"); history_name_stack+=("$n"); ((current_level++)); selected_index=0; filter_query=""; elif [ "$cm" == "BACK" ]; then ((current_level--)); unset 'history_name_stack[-1]'; selected_index=${history_position_stack[-1]:-0}; unset 'history_position_stack[-1]'; filter_query=""; elif [ "$cm" == "EXIT" ]; then clear; exit 0; else execute_task "$cm" "$n" "$d"; fi;;
+        "") [ ${#menu_options[@]} -eq 0 ] && continue
+            IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
+            if [ "$cm" == "EXIT" ]; then clear; exit 0; else execute_task "$cm" "$n" "$d"; fi;;
         "q") clear; exit 0;;
     esac
-    cnt=${#menu_options[@]}; if [ "$cnt" -gt 0 ]; then [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1)); [ "$selected_index" -ge "$cnt" ] && selected_index=0; else selected_index=0; fi
+    cnt=${#menu_options[@]}; [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1)); [ "$selected_index" -ge "$cnt" ] && selected_index=0
 done
