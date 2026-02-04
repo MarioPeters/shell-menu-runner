@@ -26,7 +26,7 @@ active_mode="local"
 filter_query=""  
 dry_run_mode=0
 declare -a menu_options
-declare -A multi_select_map
+declare -a multi_select_map
 
 # ==============================================================================
 #  POLYFILLS & UTILS
