@@ -11,7 +11,7 @@
 **The Ultimate Task Runner for the Terminal.**
 Version 1.2.0 (Gold Master). Zero config, Zero dependencies. Runs on Linux and macOS.
 
-### ✨ Feature Summary (v1.1.1)
+### ✨ Feature Summary
 
 **1) 🧠 Smart Project Detection (Smart Init)**
 
@@ -135,7 +135,7 @@ rm /usr/local/bin/run
 **Die Kommandozentrale für dein Terminal.**
 Version 1.2.0 (Gold Master). Vereint Entwicklung, DevOps und System-Administration.
 
-### ✨ Feature-Zusammenfassung (v1.1.1)
+### ✨ Feature-Zusammenfassung
 
 **1) 🧠 Intelligente Projekt-Erkennung (Smart Init)**
 
