@@ -1,6 +1,6 @@
 # 🚀 Shell Menu Runner
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.1.1-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
 
 [English](#english) | [Deutsch](#deutsch)
 
@@ -39,7 +39,7 @@ Version 1.1.1 (Gold Master). Zero config, Zero dependencies. Runs on Linux and m
 
 - **Themes:** CYBER / MONO via `# THEME:`.
 - **Live Filter:** Press `/` to filter by name.
-- **Navigation:** Arrow keys and `j`/`k`.
+- **Navigation:** Arrow keys and `j`/`k`; multi-select with Space, execution runs all marked tasks in order on Enter.
 
 **6) 🔌 Integrations**
 
@@ -50,6 +50,7 @@ Version 1.1.1 (Gold Master). Zero config, Zero dependencies. Runs on Linux and m
 
 - **Self-Update:** `run --update` downloads the latest version.
 - **Magic Installer:** One-liner installer via `install.sh`.
+- **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
 
 **Planned / Roadmap**
 

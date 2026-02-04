@@ -1,5 +1,5 @@
 #!/bin/bash
-# MAGIC INSTALLER v1.0.0
+# MAGIC INSTALLER v1.1.1
 REPO_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
 SCRIPT_NAME="run"
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -9,3 +9,6 @@ if [ ! -w "$TARGET_DIR" ]; then TARGET_DIR="$HOME/.local/bin"; mkdir -p "$TARGET
 echo -e "Installiere nach ${BLUE}$TARGET_DIR${NC}..."
 if [ -w "$TARGET_DIR" ]; then curl -fsSL "$REPO_URL" -o "$TARGET_DIR/$SCRIPT_NAME" && chmod +x "$TARGET_DIR/$SCRIPT_NAME"; else sudo curl -fsSL "$REPO_URL" -o "$TARGET_DIR/$SCRIPT_NAME" && sudo chmod +x "$TARGET_DIR/$SCRIPT_NAME"; fi
 echo -e "${GREEN}✔ Installiert.${NC} Tippe 'run'."
+if [ "$TARGET_DIR" = "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$TARGET_DIR:"* ]]; then
+	echo -e "${BLUE}Hinweis:${NC} Füge $TARGET_DIR zu deinem PATH hinzu, z.B. via 'echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> ~/.zshrc'"
+fi

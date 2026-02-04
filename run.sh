@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-#  SHELL MENU RUNNER v1.1.1 (Gold Master + Auto-Detection + Self-Update)
+#  SHELL MENU RUNNER v1.1.2 (Gold Master + Auto-Detection + Self-Update)
 #  GitHub: https://github.com/MarioPeters/shell-menu-runner
 #  Lizenz: MIT
 # ==============================================================================
@@ -10,6 +10,7 @@ readonly VERSION="1.1.1"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
+readonly C_BOLD=$'\e[1m'
 
 # --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
@@ -55,21 +56,43 @@ get_cache_file() {
 save_state() { echo "$selected_index" > "$(get_cache_file)"; }
 load_state() { local c=$(get_cache_file); [ -f "$c" ] && selected_index=$(cat "$c"); }
 
+file_sha256() {
+    local f="$1"
+    if command -v sha256sum &>/dev/null; then sha256sum "$f" | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then shasum -a 256 "$f" | awk '{print $1}'
+    else return 1; fi
+}
+
 # ==============================================================================
 #  SELF UPDATE
 # ==============================================================================
 
 self_update() {
     echo -e "${COLOR_HEAD}Suche nach Updates...${COLOR_RESET}"
-    local tmp_file="/tmp/run_update.sh"
+    local tmp_file
+    tmp_file=$(mktemp /tmp/run_update.XXXXXX) || { echo -e "${COLOR_ERR}Konnte temporäre Datei nicht anlegen.${COLOR_RESET}"; return 1; }
     if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
+        if [ -n "$RUN_EXPECTED_SHA256" ]; then
+            local dl_hash=""
+            dl_hash=$(file_sha256 "$tmp_file") || echo -e "${COLOR_WARN}Warnung: sha256sum/shasum nicht gefunden. Integritätscheck übersprungen.${COLOR_RESET}"
+            if [ -n "$dl_hash" ] && [ "$dl_hash" != "$RUN_EXPECTED_SHA256" ]; then
+                echo -e "${COLOR_ERR}Integritätscheck fehlgeschlagen. Erwartet $RUN_EXPECTED_SHA256, erhalten $dl_hash.${COLOR_RESET}"
+                rm -f "$tmp_file"
+                return 1
+            fi
+        fi
         local new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" | cut -d'"' -f2)
         if [ "$new_ver" == "$VERSION" ]; then
             echo -e "${COLOR_SEL}Du nutzt bereits die neueste Version ($VERSION).${COLOR_RESET}"
-            rm "$tmp_file"
+            rm -f "$tmp_file"
         else
             echo -e "${COLOR_WARN}Update gefunden: $VERSION -> $new_ver${COLOR_RESET}"
             local install_path=$(command -v run)
+            if [ -z "$install_path" ]; then
+                echo -e "${COLOR_ERR}Konnte Installationspfad nicht bestimmen (run nicht im PATH).${COLOR_RESET}"
+                rm -f "$tmp_file"
+                return 1
+            fi
             if [ -w "$install_path" ]; then
                 mv "$tmp_file" "$install_path" && chmod +x "$install_path"
             else
@@ -79,6 +102,7 @@ self_update() {
         fi
     else
         echo -e "${COLOR_ERR}Fehler beim Herunterladen des Updates.${COLOR_RESET}"
+        rm -f "$tmp_file"
     fi
 }
 
@@ -152,8 +176,9 @@ parse_config_vars() {
 
 get_menu_options() {
     awk -F'|' -v lvl="$current_level" -v q="$filter_query" \
-        'BEGIN {IGNORECASE=1} /^[^#]/ && !/^VAR_/ && NF >= 2 && $1 == lvl && ($2 ~ q) { 
-            desc = ($4 != "") ? $4 : ""; print $2"|"$3"|"desc 
+        'BEGIN {IGNORECASE=1} /^[^#]/ && !/^VAR_/ && NF >= 2 && $1 == lvl { \
+            if (q != "" && index(tolower($2), tolower(q)) == 0) next; \
+            desc = ($4 != "") ? $4 : ""; print $2"|"$3"|"desc \
         }' "$config_path"
 }
 
@@ -180,6 +205,7 @@ execute_task() {
 
 draw_menu() {
     hide_cursor; printf "\033[H\033[J"
+    local active_desc=""
     IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
     local num=${#menu_options[@]}; local cols=1; [ "$num" -gt 10 ] && cols=3 || { [ "$num" -gt 5 ] && cols=2; }; local rows=$(( (num + cols - 1) / cols ))
     
@@ -229,6 +255,16 @@ while true; do
         "/") echo -e "\n${COLOR_INFO}Search:${COLOR_RESET}\c"; tput cnorm; read -r filter_query; selected_index=0;;
         "g") if [ "$active_mode" == "local" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; else if found=$(find_local_config); then active_mode="local"; config_path="$found"; fi; fi; selected_index=0; current_level=0; parse_config_vars; load_state;;
         "") [ ${#menu_options[@]} -eq 0 ] && continue
+            if [ ${#multi_select_map[@]} -gt 0 ]; then
+                IFS=$'\n' read -r -d '' -a multi_keys < <(printf "%s\n" "${!multi_select_map[@]}" | sort -n && printf '\0') || true
+                for mi in "${multi_keys[@]}"; do
+                    IFS='|' read -r n cm d <<< "${menu_options[$mi]}"
+                    [ "$cm" == "EXIT" ] && continue
+                    execute_task "$cm" "$n" "$d"
+                done
+                multi_select_map=()
+                continue
+            fi
             IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
             if [ "$cm" == "EXIT" ]; then clear; exit 0; else execute_task "$cm" "$n" "$d"; fi;;
         "q") clear; exit 0;;
