@@ -22,7 +22,6 @@ COLOR_RESET=$'\e[0m'
 # --- GLOBAL STATE ---
 current_level=0
 selected_index=0
-history_position_stack=() 
 history_name_stack=("Main") 
 config_path="" 
 active_mode="local"
@@ -58,7 +57,7 @@ get_cache_file() {
     echo "/tmp/run_menu_${h}.state"
 }
 save_state() { echo "$selected_index" > "$(get_cache_file)"; }
-load_state() { local c=$(get_cache_file); [ -f "$c" ] && selected_index=$(cat "$c"); }
+load_state() { local c; c=$(get_cache_file); [ -f "$c" ] && selected_index=$(cat "$c"); }
 
 file_sha256() {
     local f="$1"
@@ -108,7 +107,8 @@ self_update() {
             rm -f "$tmp_file"
         else
             echo -e "${COLOR_WARN}Update gefunden: $VERSION -> $new_ver${COLOR_RESET}"
-            local install_path=$(command -v run)
+            local install_path
+            install_path=$(command -v run)
             if [ -z "$install_path" ]; then
                 echo -e "${COLOR_ERR}Konnte Installationspfad nicht bestimmen (run nicht im PATH).${COLOR_RESET}"
                 rm -f "$tmp_file"
@@ -153,7 +153,8 @@ smart_init() {
         # 1. Node.js / React Detection
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ package.json erkannt. Importiere Scripts...${COLOR_RESET}"
-            local scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//')
+            local scripts
+            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//')
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done
@@ -174,7 +175,7 @@ smart_init() {
         fi
 
         # Fallback falls nichts gefunden wurde
-        if [ $(wc -l < "$target") -lt 4 ]; then
+        if [ "$(wc -l < "$target")" -lt 4 ]; then
             echo "0|🚀 Hello World|echo 'Edit .tasks to add commands'|Beispiel Task" >> "$target"
         fi
     fi
@@ -189,7 +190,8 @@ smart_init() {
 
 parse_config_vars() {
     [ ! -f "$config_path" ] && return
-    local file_theme=$(grep "^# THEME:" "$config_path" | head -n 1 | cut -d: -f2 | xargs)
+    local file_theme
+    file_theme=$(grep "^# THEME:" "$config_path" | head -n 1 | cut -d: -f2 | xargs)
     case "$file_theme" in
         "CYBER") COLOR_HEAD=$'\e[1;36m'; COLOR_SEL=$'\e[1;35m'; COLOR_INFO=$'\e[1;32m' ;;
         "MONO")  COLOR_HEAD=$'\e[1;37m'; COLOR_SEL=$'\e[4;37m'; COLOR_INFO=$'\e[2m' ;;
@@ -205,7 +207,7 @@ get_menu_options() {
 }
 
 execute_task() {
-    local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args="$@"
+    local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
     tput cnorm 2>/dev/null; clear 
     echo -e "${COLOR_HEAD}Executing:${COLOR_RESET} $name"
     
@@ -218,9 +220,9 @@ execute_task() {
         local p="${BASH_REMATCH[1]}"; echo -e "\n${COLOR_INFO}Eingabe für:${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
     done
     
-    echo -e "${COLOR_DIM}> $cmd $args${COLOR_RESET}\n"; save_state
+    echo -e "${COLOR_DIM}> $cmd ${args[*]}${COLOR_RESET}\n"; save_state
     if [ "$dry_run_mode" -eq 0 ]; then
-        ( [ "$active_mode" == "local" ] && cd "$(dirname "$config_path")"; [ -f ".env" ] && set -a && source .env && set +a; eval "$cmd $args" )
+        ( [ "$active_mode" == "local" ] && cd "$(dirname "$config_path")"; [ -f ".env" ] && set -a && source .env && set +a; eval "$cmd ${args[*]}" )
         local status=$?
         if [ $status -ne 0 ]; then
             echo -e "\n${COLOR_ERR}Task fehlgeschlagen (exit $status).${COLOR_RESET}"
@@ -228,16 +230,19 @@ execute_task() {
             echo -e "\n${COLOR_SEL}✔ Task erfolgreich.${COLOR_RESET}"
         fi
     fi
-    echo -e "\n${COLOR_DIM}Taste drücken...${COLOR_RESET}"; read -n1 -s
+    echo -e "\n${COLOR_DIM}Taste drücken...${COLOR_RESET}"; read -r -n1 -s
 }
 
 draw_menu() {
     hide_cursor; printf "\033[H\033[J"
     local active_desc=""
     IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-    local num=${#menu_options[@]}; local cols=1; [ "$num" -gt 10 ] && cols=3 || { [ "$num" -gt 5 ] && cols=2; }; local rows=$(( (num + cols - 1) / cols ))
+    local num=${#menu_options[@]}; local cols=1
+    if [ "$num" -gt 10 ]; then cols=3; elif [ "$num" -gt 5 ]; then cols=2; fi
+    local rows=$(( (num + cols - 1) / cols ))
     
-    local title=$(grep "^# TITLE:" "$config_path" | head -n 1 | cut -d: -f2)
+    local title
+    title=$(grep "^# TITLE:" "$config_path" | head -n 1 | cut -d: -f2)
     [ -z "$title" ] && title="$(basename "$(dirname "$config_path")" | tr '[:lower:]' '[:upper:]')"
     [ "$active_mode" == "global" ] && title="SYSTEM CONTROL"
     
@@ -249,7 +254,7 @@ draw_menu() {
     for (( r=0; r<rows; r++ )); do
         for (( c=0; c<cols; c++ )); do
             local idx=$(( r + c * rows ))
-            if [ $idx -lt $num ]; then
+            if [ "$idx" -lt "$num" ]; then
                 IFS='|' read -r name cmd desc <<< "${menu_options[$idx]}"
                 local d_num=$((idx + 1)); local marker=" "; [[ -n "${multi_select_map[$idx]}" ]] && marker="${COLOR_WARN}✔${COLOR_RESET}"
                 if [ "$idx" -eq "$selected_index" ]; then printf "${COLOR_SEL}›${marker}%-2s %-22s${COLOR_RESET}" "$d_num" "${name:0:22}"; active_desc="$desc"
@@ -284,9 +289,9 @@ while true; do
     case "$key" in
         $'\x1b') read -rsn2 k; case "$k" in '[A') ((selected_index--));; '[B') ((selected_index++));; esac;;
         "k") ((selected_index--));; "j") ((selected_index++));;
-        " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset multi_select_map[$selected_index]; else multi_select_map[$selected_index]=1; fi;;
+        " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset 'multi_select_map[$selected_index]'; else multi_select_map[$selected_index]=1; fi;;
         "/") echo -e "\n${COLOR_INFO}Search:${COLOR_RESET}\c"; tput cnorm; read -r filter_query; selected_index=0;;
-        "g") if [ "$active_mode" == "local" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; else if found=$(find_local_config); then active_mode="local"; config_path="$found"; fi; fi; selected_index=0; current_level=0; parse_config_vars; load_state;;
+        "g") if [ "$active_mode" == "local" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; elif found=$(find_local_config); then active_mode="local"; config_path="$found"; fi; selected_index=0; current_level=0; parse_config_vars; load_state;;
         "") [ ${#menu_options[@]} -eq 0 ] && continue
             if [ ${#multi_select_map[@]} -gt 0 ]; then
                 IFS=$'\n' read -r -d '' -a multi_keys < <(printf "%s\n" "${!multi_select_map[@]}" | sort -n && printf '\0') || true
