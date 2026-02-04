@@ -29,7 +29,7 @@ jobs:
 
           # Extract changelog section for this version
           awk -v ver="$VERSION" '
-            $0 ~ "^## \\""ver"\\"" {found=1; next}
+            $0 ~ "^## \\[" ver "\\]" {found=1; next}
             found && /^## \[/ {exit}
             found {print}
           ' CHANGELOG.md > changelog_section.md
