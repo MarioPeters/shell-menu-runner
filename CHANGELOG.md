@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] - 2026-02-05
+
+- **Sub-Menus:** Full SUB/BACK navigation with breadcrumb history (LEVEL|NAME|SUB|DESC format).
+- **Dropdown-Selects:** New `<<Select:Option1,Option2>>` syntax for interactive dropdown menus instead of free text.
+- UI improvements: Breadcrumb path display, multi-level task organization.
+
 ## [1.2.0] - 2026-02-05
 
 - Added strict-mode hardening and safer self-update (hash prompt when missing, version readability guard, tput failures ignored).

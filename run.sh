@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ==============================================================================
-#  SHELL MENU RUNNER v1.2.0 (Gold Master + Auto-Detection + Self-Update)
+#  SHELL MENU RUNNER v1.3.0 (Sub-Menus + Dropdown-Selects)
 #  GitHub: https://github.com/MarioPeters/shell-menu-runner
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="1.2.0"
+readonly VERSION="1.3.0"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
@@ -206,6 +206,37 @@ get_menu_options() {
         }' "$config_path" || true
 }
 
+select_dropdown() {
+    local options_str="$1"
+    local IFS=','
+    local -a options=()
+    mapfile -t options < <(echo "$options_str" | tr ',' '\n')
+    local selected=0
+    local num=${#options[@]}
+    
+    while true; do
+        clear
+        echo -e "${COLOR_HEAD}Select Option:${COLOR_RESET}"
+        for (( i=0; i<num; i++ )); do
+            if [ "$i" -eq "$selected" ]; then
+                echo -e "${COLOR_SEL}›${COLOR_RESET} ${options[$i]}"
+            else
+                echo "  ${options[$i]}"
+            fi
+        done
+        echo -e "\n${COLOR_DIM}[up/down] Navigate | [Enter] Select${COLOR_RESET}"
+        
+        read -rsn1 key
+        case "$key" in
+            $'\x1b') read -rsn2 k; case "$k" in '[A') ((selected--));; '[B') ((selected++));; esac;;
+            "k") ((selected--));; "j") ((selected++));;
+            "") echo "${options[$selected]}"; return 0;;
+        esac
+        [ "$selected" -lt 0 ] && selected=$((num-1))
+        [ "$selected" -ge "$num" ] && selected=0
+    done
+}
+
 execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
     tput cnorm 2>/dev/null; clear 
@@ -216,8 +247,18 @@ execute_task() {
         read -p "Sicher? [y/N] " -n 1 -r; echo ""; [[ ! $REPLY =~ ^[Yy]$ ]] && return
     fi
 
-    while [[ "$cmd" =~ \<\<([^:>]+)\>\> ]]; do
-        local p="${BASH_REMATCH[1]}"; echo -e "\n${COLOR_INFO}Eingabe für:${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
+    while [[ "$cmd" =~ \<\<([^:>]+)(:[^>]*)?\>\> ]]; do
+        local p="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}" 
+        if [[ "$rest" == :* ]]; then
+            local opts_str="${rest:1}"
+            echo -e "\n${COLOR_INFO}Wähle für:${COLOR_RESET} $p"
+            local r
+            r=$(select_dropdown "$opts_str")
+            cmd="${cmd//\<\<"$p":"$opts_str"\>\>/$r}"
+        else
+            echo -e "\n${COLOR_INFO}Eingabe für:${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
+        fi
     done
     
     echo -e "${COLOR_DIM}> $cmd ${args[*]}${COLOR_RESET}\n"; save_state
@@ -306,7 +347,15 @@ while true; do
                 continue
             fi
             IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
-            if [ "$cm" == "EXIT" ]; then clear; exit 0; else execute_task "$cm" "$n" "$d"; fi;;
+            if [ "$cm" == "EXIT" ]; then 
+                clear; exit 0
+            elif [ "$cm" == "SUB" ]; then
+                ((current_level++)); history_name_stack+=("$n"); selected_index=0
+            elif [ "$cm" == "BACK" ] && [ "$current_level" -gt 0 ]; then
+                ((current_level--)); history_name_stack=("${history_name_stack[@]:0:${#history_name_stack[@]}-1}"); selected_index=0
+            else
+                execute_task "$cm" "$n" "$d"
+            fi;;
         "q") clear; exit 0;;
     esac
     cnt=${#menu_options[@]}; [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1)); [ "$selected_index" -ge "$cnt" ] && selected_index=0

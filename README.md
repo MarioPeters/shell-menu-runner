@@ -1,6 +1,6 @@
 # 🚀 Shell Menu Runner
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.3.0-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
 
 [English](#english) | [Deutsch](#deutsch)
 
@@ -9,7 +9,7 @@
 ## 🇺🇸 English
 
 **The Ultimate Task Runner for the Terminal.**
-Version 1.2.0 (Gold Master). Zero config, Zero dependencies. Runs on Linux and macOS.
+Version 1.3.0 (Sub-Menus & Dropdown-Selects). Zero config, Zero dependencies. Runs on Linux and macOS.
 
 ### ✨ Feature Summary
 
@@ -28,9 +28,16 @@ Version 1.2.0 (Gold Master). Zero config, Zero dependencies. Runs on Linux and m
 **3) 🛠 Dynamic Interaction & Inputs**
 
 - **Text Inputs:** Use `<<Name>>` placeholders and get prompted at runtime.
+- **Dropdown-Selects:** Use `<<Select:Option1,Option2>>` for interactive dropdown menus.
 - **Environment Files:** Loads a local `.env` before executing a task.
 
-**4) 🛡 Safety & Control**
+**4) � Sub-Menus & Navigation**
+
+- **Sub-Menus:** Organize complex tasks with LEVEL|NAME|SUB|DESC format.
+- **BACK:** Navigate back to parent menu with breadcrumb history displayed.
+- **Breadcrumbs:** Visual path showing menu hierarchy (e.g., Main > Database > Migrations).
+
+**5) �🛡 Safety & Control**
 
 - **Confirmation:** `[!]` in the description forces an explicit confirmation.
 - **Multi-Select (UI):** Mark items with Space (execution remains single-item).
@@ -41,20 +48,20 @@ Version 1.2.0 (Gold Master). Zero config, Zero dependencies. Runs on Linux and m
 - **Live Filter:** Press `/` to filter by name.
 - **Navigation:** Arrow keys and `j`/`k`; multi-select with Space, execution runs all marked tasks in order on Enter.
 
-**6) 🔌 Integrations**
+**7) 🔌 Integrations**
 
 - **Zsh Widget:** Open the menu with `Ctrl+O`.
 - **Raycast & Alfred:** macOS integrations via scripts in `integrations/`.
 
-**7) 🔄 Maintenance & Installation**
+**8) 🔄 Maintenance & Installation**
 
 - **Self-Update:** `run --update` downloads the latest version.
 - **Magic Installer:** One-liner installer via `install.sh`.
 - **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
 - Without `RUN_EXPECTED_SHA256`, `run --update` asks for confirmation before applying the download.
-- Recommended hash for v1.2.0: `f56b019f3a823642a3469e3cf8f8634a09819c1094a2c1baa1e997ae98e8364d`.
+- Recommended hash for v1.3.0: (TBD after v1.3.0 release).
 
-**8) 🔒 Security Notes**
+**9) 🔒 Security Notes**
 
 - Script runs with `set -euo pipefail` for safer defaults; unexpected errors stop execution.
 - Installer falls back to `$HOME/.local/bin` if `/usr/local/bin` is not writable; add it to `PATH` when prompted.
