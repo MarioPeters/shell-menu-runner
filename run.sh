@@ -290,7 +290,7 @@ while true; do
     case "$key" in
         $'\x1b') read -rsn2 k; case "$k" in '[A') ((selected_index--));; '[B') ((selected_index++));; esac;;
         "k") ((selected_index--));; "j") ((selected_index++));;
-        " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset multi_select_map["$selected_index"]; else multi_select_map["$selected_index"]=1; fi;;
+        " ") if [[ -n "${multi_select_map[$selected_index]}" ]]; then unset 'multi_select_map[$selected_index]'; else multi_select_map["$selected_index"]=1; fi;;
         "/") echo -e "\n${COLOR_INFO}Search:${COLOR_RESET}\c"; tput cnorm; read -r filter_query; selected_index=0;;
         "g") if [ "$active_mode" == "local" ]; then active_mode="global"; config_path="$GLOBAL_CONFIG"; elif found=$(find_local_config); then active_mode="local"; config_path="$found"; fi; selected_index=0; current_level=0; parse_config_vars; load_state;;
         "") [ ${#menu_options[@]} -eq 0 ] && continue
