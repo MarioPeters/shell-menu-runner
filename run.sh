@@ -1,16 +1,18 @@
 #!/bin/bash
 
 # ==============================================================================
-#  SHELL MENU RUNNER v1.1.2 (Gold Master + Auto-Detection + Self-Update)
+#  SHELL MENU RUNNER v1.2.0 (Gold Master + Auto-Detection + Self-Update)
 #  GitHub: https://github.com/MarioPeters/shell-menu-runner
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="1.1.1"
+readonly VERSION="1.2.0"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
 readonly C_BOLD=$'\e[1m'
+
+set -euo pipefail
 
 # --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
@@ -34,16 +36,18 @@ declare -a multi_select_map
 # ==============================================================================
 
 get_realpath() { command -v realpath &>/dev/null && realpath "$1" || echo "$PWD/${1#./}"; }
-cleanup_terminal() { tput cnorm 2>/dev/null; echo -e "${COLOR_RESET}"; }
+cleanup_terminal() { tput cnorm 2>/dev/null || true; echo -e "${COLOR_RESET}"; }
 trap cleanup_terminal EXIT INT TERM
-hide_cursor() { tput civis 2>/dev/null; }
+hide_cursor() { tput civis 2>/dev/null || true; }
 
 find_local_config() {
+    set +e
     local d="$PWD"
     while [ "$d" != "/" ]; do
-        if [ -f "$d/$LOCAL_CONFIG" ]; then echo "$d/$LOCAL_CONFIG"; return 0; fi
+        if [ -f "$d/$LOCAL_CONFIG" ]; then echo "$d/$LOCAL_CONFIG"; set -e; return 0; fi
         d=$(dirname "$d")
     done
+    set -e
     return 1
 }
 
@@ -69,6 +73,10 @@ file_sha256() {
 
 self_update() {
     echo -e "${COLOR_HEAD}Suche nach Updates...${COLOR_RESET}"
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "${COLOR_ERR}curl nicht gefunden. Bitte installieren und erneut versuchen.${COLOR_RESET}"
+        return 1
+    fi
     local tmp_file
     tmp_file=$(mktemp /tmp/run_update.XXXXXX) || { echo -e "${COLOR_ERR}Konnte temporäre Datei nicht anlegen.${COLOR_RESET}"; return 1; }
     if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
@@ -80,8 +88,21 @@ self_update() {
                 rm -f "$tmp_file"
                 return 1
             fi
+        else
+            echo -e "${COLOR_WARN}Kein RUN_EXPECTED_SHA256 gesetzt. Update ohne Hash-Prüfung.${COLOR_RESET}"
+            read -p "Fortfahren? [y/N] " -n 1 -r; echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                rm -f "$tmp_file"
+                return 1
+            fi
         fi
-        local new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" | cut -d'"' -f2)
+        local new_ver=""
+        new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" | cut -d'"' -f2 || true)
+        if [ -z "$new_ver" ]; then
+            echo -e "${COLOR_ERR}Konnte Versionsinfo im Update nicht lesen.${COLOR_RESET}"
+            rm -f "$tmp_file"
+            return 1
+        fi
         if [ "$new_ver" == "$VERSION" ]; then
             echo -e "${COLOR_SEL}Du nutzt bereits die neueste Version ($VERSION).${COLOR_RESET}"
             rm -f "$tmp_file"
@@ -99,6 +120,7 @@ self_update() {
                 sudo mv "$tmp_file" "$install_path" && sudo chmod +x "$install_path"
             fi
             echo -e "${COLOR_SEL}✔ Update auf $new_ver erfolgreich!${COLOR_RESET}"
+            command -v run >/dev/null 2>&1 && echo -e "${COLOR_INFO}Aktuelle Version:${COLOR_RESET} $(run --version 2>/dev/null)"
         fi
     else
         echo -e "${COLOR_ERR}Fehler beim Herunterladen des Updates.${COLOR_RESET}"
@@ -179,7 +201,7 @@ get_menu_options() {
         'BEGIN {IGNORECASE=1} /^[^#]/ && !/^VAR_/ && NF >= 2 && $1 == lvl { \
             if (q != "" && index(tolower($2), tolower(q)) == 0) next; \
             desc = ($4 != "") ? $4 : ""; print $2"|"$3"|"desc \
-        }' "$config_path"
+        }' "$config_path" || true
 }
 
 execute_task() {
@@ -199,6 +221,12 @@ execute_task() {
     echo -e "${COLOR_DIM}> $cmd $args${COLOR_RESET}\n"; save_state
     if [ "$dry_run_mode" -eq 0 ]; then
         ( [ "$active_mode" == "local" ] && cd "$(dirname "$config_path")"; [ -f ".env" ] && set -a && source .env && set +a; eval "$cmd $args" )
+        local status=$?
+        if [ $status -ne 0 ]; then
+            echo -e "\n${COLOR_ERR}Task fehlgeschlagen (exit $status).${COLOR_RESET}"
+        else
+            echo -e "\n${COLOR_SEL}✔ Task erfolgreich.${COLOR_RESET}"
+        fi
     fi
     echo -e "\n${COLOR_DIM}Taste drücken...${COLOR_RESET}"; read -n1 -s
 }
@@ -232,7 +260,12 @@ draw_menu() {
     done
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     if [ -n "$active_desc" ]; then echo -e "${COLOR_INFO}ℹ $active_desc${COLOR_RESET}"
-    else local hint="[g] Global"; [ "$active_mode" == "global" ] && hint="[g] Local"; echo -e "${COLOR_DIM} [j/k] Move [Space] Multi $hint [e] Edit [Enter] Run${COLOR_RESET}"; fi
+    else
+        local hint="[g] Global"; [ "$active_mode" == "global" ] && hint="[g] Local"
+        local multi_hint=""; local marked=${#multi_select_map[@]}
+        [ "$marked" -gt 0 ] && multi_hint=" [$marked marked]"
+        echo -e "${COLOR_DIM} [j/k] Move [Space] Multi$multi_hint $hint [e] Edit [Enter] Run${COLOR_RESET}"
+    fi
 }
 
 # --- MAIN LOOP ---
@@ -262,6 +295,7 @@ while true; do
                     [ "$cm" == "EXIT" ] && continue
                     execute_task "$cm" "$n" "$d"
                 done
+                echo -e "${COLOR_INFO}Ausgeführt:${COLOR_RESET} ${#multi_keys[@]} markierte Tasks"
                 multi_select_map=()
                 continue
             fi

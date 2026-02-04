@@ -1,6 +1,6 @@
 # 🚀 Shell Menu Runner
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.2.0-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
 
 [English](#english) | [Deutsch](#deutsch)
 
@@ -9,7 +9,7 @@
 ## 🇺🇸 English
 
 **The Ultimate Task Runner for the Terminal.**
-Version 1.1.1 (Gold Master). Zero config, Zero dependencies. Runs on Linux and macOS.
+Version 1.2.0 (Gold Master). Zero config, Zero dependencies. Runs on Linux and macOS.
 
 ### ✨ Feature Summary (v1.1.1)
 
@@ -51,6 +51,14 @@ Version 1.1.1 (Gold Master). Zero config, Zero dependencies. Runs on Linux and m
 - **Self-Update:** `run --update` downloads the latest version.
 - **Magic Installer:** One-liner installer via `install.sh`.
 - **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
+- Without `RUN_EXPECTED_SHA256`, `run --update` asks for confirmation before applying the download.
+- Recommended hash for v1.2.0: `f56b019f3a823642a3469e3cf8f8634a09819c1094a2c1baa1e997ae98e8364d`.
+
+**8) 🔒 Security Notes**
+
+- Script runs with `set -euo pipefail` for safer defaults; unexpected errors stop execution.
+- Installer falls back to `$HOME/.local/bin` if `/usr/local/bin` is not writable; add it to `PATH` when prompted.
+- Use `RUN_EXPECTED_SHA256` with `run --update` to pin the downloaded script hash.
 
 **Planned / Roadmap**
 
@@ -125,7 +133,7 @@ rm /usr/local/bin/run
 ## 🇩🇪 Deutsch
 
 **Die Kommandozentrale für dein Terminal.**
-Version 1.1.1 (Gold Master). Vereint Entwicklung, DevOps und System-Administration.
+Version 1.2.0 (Gold Master). Vereint Entwicklung, DevOps und System-Administration.
 
 ### ✨ Feature-Zusammenfassung (v1.1.1)
 
@@ -166,6 +174,15 @@ Version 1.1.1 (Gold Master). Vereint Entwicklung, DevOps und System-Administrati
 
 - **Self-Update:** `run --update` lädt die neueste Version.
 - **Magic Installer:** Einzeiler über `install.sh`.
+- **Integritätscheck (optional):** Setze `RUN_EXPECTED_SHA256=<hash>` vor `run --update`, um den Download zu verifizieren.
+- Ohne `RUN_EXPECTED_SHA256` fragt `run --update` nach einer Bestätigung, bevor es das Update anwendet.
+- Empfohlener Hash für v1.2.0: `f56b019f3a823642a3469e3cf8f8634a09819c1094a2c1baa1e997ae98e8364d`.
+
+**8) 🔒 Sicherheitshinweise**
+
+- Script läuft mit `set -euo pipefail`; unerwartete Fehler stoppen die Ausführung.
+- Installer nutzt `$HOME/.local/bin`, falls `/usr/local/bin` nicht beschreibbar ist; danach ggf. in den `PATH` aufnehmen.
+- Nutze `RUN_EXPECTED_SHA256`, um das Update gegen einen bekannten Hash zu prüfen.
 
 **Geplant / Roadmap**
 

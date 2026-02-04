@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: shellcheck run.sh
+
+      - name: Build release notes (CHANGELOG + SHA)
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          HASH=$(sha256sum run.sh | awk '{print $1}')
+
+          # Extract changelog section for this version
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\""ver"\\"" {found=1; next}
+            found && /^## \[/ {exit}
+            found {print}
+          ' CHANGELOG.md > changelog_section.md
+
+          if [ ! -s changelog_section.md ]; then
+            echo "No changelog entry found for ${VERSION}, using fallback." >&2
+            echo "Release ${VERSION}" > changelog_section.md
+            echo "- No changelog entry found." >> changelog_section.md
+          fi
+
+          {
+            echo "Release ${VERSION}"
+            echo ""
+            cat changelog_section.md
+            echo ""
+            echo "- SHA256 (run.sh): ${HASH}"
+          } > release_notes.md
+
+          echo "sha256=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: run.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

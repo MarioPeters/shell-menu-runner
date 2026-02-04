@@ -1,5 +1,5 @@
 #!/bin/bash
-# MAGIC INSTALLER v1.1.1
+# MAGIC INSTALLER v1.2.0
 REPO_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
 SCRIPT_NAME="run"
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; NC='\033[0m'
