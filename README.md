@@ -11,6 +11,10 @@
 **The Ultimate Task Runner for the Terminal.**
 Version 1.3.0 (Sub-Menus & Dropdown-Selects). Zero config, Zero dependencies. Runs on Linux and macOS.
 
+### 📸 Screenshot
+
+![Shell Menu Runner UI](docs/screenshot.svg)
+
 ### ✨ Feature Summary
 
 **1) 🧠 Smart Project Detection (Smart Init)**
@@ -24,6 +28,7 @@ Version 1.3.0 (Sub-Menus & Dropdown-Selects). Zero config, Zero dependencies. Ru
 - **Project Tasks:** Uses a local `.tasks` file per project.
 - **System Tasks:** Switch with `g` to the global `~/.tasks` menu.
 - **Auto Search:** Walks upwards to find the nearest `.tasks` file.
+- **Repo Default:** This repo ships with a starter `.tasks` you can edit.
 
 **3) 🛠 Dynamic Interaction & Inputs**
 
@@ -45,8 +50,10 @@ Version 1.3.0 (Sub-Menus & Dropdown-Selects). Zero config, Zero dependencies. Ru
 **5) 🎨 UI & UX**
 
 - **Themes:** CYBER / MONO via `# THEME:`.
+- **Settings Menu:** Press `s` to configure theme, columns, and language (stored in `.runrc`).
 - **Live Filter:** Press `/` to filter by name.
-- **Navigation:** Arrow keys and `j`/`k`; multi-select with Space, execution runs all marked tasks in order on Enter.
+- **Navigation:** Arrow keys (↑↓←→) or `j`/`k`/`h`/`l` (vim-style); horizontal navigation between columns.
+- **Multi-Select:** Mark items with Space, execution runs all marked tasks in order on Enter.
 
 **7) 🔌 Integrations**
 
@@ -98,6 +105,18 @@ VAR_PORT=8080
 1|Back|BACK
 ```
 
+### ⚙️ Settings (.runrc)
+
+Settings can be saved globally (`~/.runrc`) or per project (`.runrc`). Local settings override global.
+
+```text
+# Shell Menu Runner Settings
+THEME=CYBER
+LANG=EN
+COLS_MIN=1
+COLS_MAX=3
+```
+
 ### 🔌 Integrations
 
 #### VS Code
@@ -133,6 +152,25 @@ Press `Ctrl+O` to open the menu instantly (setup by installer).
 rm /usr/local/bin/run
 ```
 
+### 🔧 Development
+
+This repo includes an automated release script with interactive menu:
+
+```bash
+./scripts/release.sh          # Interactive menu
+./scripts/release.sh --dry-run  # Direct dry-run mode
+./scripts/release.sh --release  # Direct release mode
+./scripts/release.sh --help     # Show usage
+```
+
+The script handles version bumping, SHA256 computation, auto-generates CHANGELOG from git commits (opens editor for review), and git operations.
+
+**Note:** Python3 is only required for the release process (maintainer only), not for end users.
+
+### 🤝 Contributing
+
+Pull requests are welcome! Please run `shellcheck` before submitting.
+
 ---
 
 <a name="deutsch"></a>
@@ -141,6 +179,10 @@ rm /usr/local/bin/run
 
 **Die Kommandozentrale für dein Terminal.**
 Version 1.2.0 (Gold Master). Vereint Entwicklung, DevOps und System-Administration.
+
+### 📸 Screenshot
+
+![Shell Menu Runner UI](docs/screenshot.svg)
 
 ### ✨ Feature-Zusammenfassung
 
@@ -155,6 +197,7 @@ Version 1.2.0 (Gold Master). Vereint Entwicklung, DevOps und System-Administrati
 - **Projekt-Tasks:** Nutzt eine lokale `.tasks` pro Projekt.
 - **System-Tasks:** Wechsel mit `g` ins globale Menü `~/.tasks`.
 - **Auto-Suche:** Sucht beim Start nach oben die nächste `.tasks`.
+- **Repo-Standard:** Dieses Repo enthaelt eine Start-`.tasks`, die du anpassen kannst.
 
 **3) 🛠 Dynamische Interaktion & Eingaben**
 
@@ -169,8 +212,10 @@ Version 1.2.0 (Gold Master). Vereint Entwicklung, DevOps und System-Administrati
 **5) 🎨 UI & UX**
 
 - **Themes:** CYBER / MONO via `# THEME:`.
+- **Einstellungen:** Mit `s` lassen sich Theme, Spalten und Sprache konfigurieren (gespeichert in `.runrc`).
 - **Echtzeit-Filter:** `/` filtert nach Namen.
-- **Navigation:** Pfeiltasten sowie `j`/`k`.
+- **Navigation:** Pfeiltasten (↑↓←→) oder `j`/`k`/`h`/`l` (Vim-Stil); horizontale Navigation zwischen Spalten.
+- **Multi-Select:** Markieren per Leertaste.
 
 **6) 🔌 Integrationen**
 
@@ -216,6 +261,33 @@ VAR_PORT=8080
 0|📝 Commit|git commit -m "<<Nachricht>>"|Interaktive Eingabe
 0|🧹 Clean|rm -rf ./tmp|[!] Erfordert Bestätigung
 ```
+
+### ⚙️ Einstellungen (.runrc)
+
+Settings koennen global (`~/.runrc`) oder pro Projekt (`.runrc`) gespeichert werden. Lokal ueberschreibt global.
+
+```text
+# Shell Menu Runner Settings
+THEME=CYBER
+LANG=DE
+COLS_MIN=1
+COLS_MAX=3
+```
+
+### 🔧 Entwicklung
+
+Dieses Repo enthaelt ein automatisches Release-Script mit interaktivem Menue:
+
+```bash
+./scripts/release.sh          # Interaktives Menue
+./scripts/release.sh --dry-run  # Direkt Dry-run Modus
+./scripts/release.sh --release  # Direkt Release Modus
+./scripts/release.sh --help     # Hilfe anzeigen
+```
+
+Das Script uebernimmt Version-Bumping, SHA256-Berechnung, generiert automatisch CHANGELOG aus Git-Commits (oeffnet Editor zum Review) und Git-Operationen.
+
+**Hinweis:** Python3 wird nur fuer den Release-Prozess (Maintainer) benoetigt, nicht fuer Endnutzer.
 
 ### 🤝 Mitmachen
 

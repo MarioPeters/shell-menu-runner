@@ -1,0 +1,19 @@
+# Shell Menu Runner Configuration
+
+# THEME: CYBER
+
+# TITLE: Shell Menu Runner
+
+0|Install|./install.sh|Install locally
+0|Run Tool|./run.sh|Launch the menu
+0|Update|./run.sh --update|Update the runner
+0|Release|SUB|Release management
+1|Release (Interactive)|./scripts/release.sh|Full release with prompts
+1|Release (Dry-run)|./scripts/release.sh --dry-run|Preview release changes
+1|Release Help|./scripts/release.sh --help|Show release script help
+1|Docs|SUB|Documentation
+2|Changelog|open CHANGELOG.md|Open changelog
+2|Release Notes|open README.local.md|Local release checklist
+2|Back|BACK
+1|Back|BACK
+0|Exit|EXIT|Close menu
