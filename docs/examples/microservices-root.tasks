@@ -1,0 +1,38 @@
+# Microservices Architecture - Root Tasks
+# Copy to project root as .tasks
+# Deploy to all services: run --across auth,api,worker,db deploy
+
+# Build All
+0|Build All|run --across auth,api,worker build --parallel|Build all services
+1|Build Auth|run auth build|Build auth service
+2|Build API|run api build|Build API service
+3|Build Worker|run worker build|Build worker service
+
+# Test All
+4|Test All|run --across auth,api,worker test --parallel|Test all services
+5|Test Coverage|run --across auth,api,worker coverage --parallel|Coverage all
+
+# Deploy
+6|Deploy Dev|run --across auth,api,worker deploy:dev depends:0|Deploy to dev
+7|Deploy Stage|run --across auth,api,worker deploy:staging depends:0|Deploy to staging
+8|Deploy Prod|run --across auth,api,worker deploy:prod depends:0,4|Deploy to production
+
+# Status & Monitoring
+9|Status All|run --across auth,api,worker status|Status all services
+10|Logs All|run --across auth,api,worker logs|View all logs
+11|Metrics|prometheus query up|Prometheus metrics
+
+# Database
+12|DB Migrate|run db migrate|Run migrations
+13|DB Backup|run db backup|Backup database
+14|DB Seed|run db seed|Seed test data
+
+# Rollback
+15|Rollback Dev|run --across auth,api,worker rollback:dev|Rollback dev
+16|Rollback Stage|run --across auth,api,worker rollback:staging|Rollback staging
+17|Rollback Prod|run --across auth,api,worker rollback:prod|Rollback prod
+
+# Maintenance
+18|Health Check|run --across auth,api,worker health|Check all services
+19|Restart Services|run --across auth,api,worker restart|Restart services
+20|Full Restart|run --across auth,api,worker restart && run --across auth,api,worker health depends:19|Full restart + health

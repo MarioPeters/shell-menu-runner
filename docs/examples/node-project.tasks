@@ -1,0 +1,28 @@
+# Node.js Project Tasks
+# Copy to project root as .tasks
+
+# Development
+0|Install|npm install|Install dependencies
+1|Dev|npm run dev|Start development server
+2|Watch|npm run watch|Watch for changes
+
+# Quality
+3|Format|npm run format|Format code (prettier)
+4|Lint|npm run lint|Lint code (eslint)
+5|Type Check|npm run type-check|Type checking (typescript)
+6|QA|npm run format && npm run lint && npm run type-check depends:3,4,5|Full quality check (all)
+
+# Testing
+7|Test Unit|npm run test:unit|Unit tests
+8|Test E2E|npm run test:e2e|End-to-end tests
+9|Test All|npm run test:unit && npm run test:e2e|Run all tests
+10|Coverage|npm run test:coverage|Coverage report
+
+# Building
+11|Build|npm run build|Build for production
+12|Preview|npm run preview|Preview production build
+
+# Deployment
+13|Start|npm start|Run production server
+14|Deploy Dev|npm run deploy:dev|Deploy to staging
+15|Deploy Prod|npm run deploy:prod|Deploy to production

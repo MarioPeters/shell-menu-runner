@@ -1,0 +1,37 @@
+# Python Project Tasks
+# Copy to project root as .tasks
+
+# Setup
+0|Install|pip install -r requirements.txt|Install dependencies
+1|Venv|python3 -m venv venv && source venv/bin/activate|Create virtual environment
+2|Update|pip install --upgrade pip && pip install -r requirements.txt|Update dependencies
+
+# Development
+3|Run|python main.py|Run application
+4|Dev Server|python manage.py runserver|Run Django development server
+5|Shell|python -i main.py|Interactive Python shell
+
+# Quality
+6|Lint|pylint src/|Lint code (pylint)
+7|Format|black src/|Format code (black)
+8|Type Check|mypy src/|Type checking (mypy)
+9|QA|pylint src/ && black src/ && mypy src/ depends:6,7,8|Full quality check
+
+# Testing
+10|Test Unit|pytest tests/|Unit tests
+11|Test Cov|pytest --cov=src tests/|Coverage report
+12|Test All|pytest tests/ --cov=src|Full test suite
+
+# Database
+13|DB Migrate|python manage.py migrate|Run migrations
+14|DB Shell|python manage.py dbshell|Database shell
+15|DB Reset|python manage.py migrate zero && python manage.py migrate|Reset database
+
+# Documentation
+16|Docs Build|sphinx-build -b html docs/ docs/_build/|Build docs
+17|Docs Serve|python -m http.server -d docs/_build/ 8000|Serve docs
+
+# Deployment
+18|Build|python setup.py sdist bdist_wheel|Build distribution
+19|Upload|twine upload dist/*|Upload to PyPI
+20|Deploy|docker build -t app:latest . && docker push app:latest|Deploy container

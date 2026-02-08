@@ -1,0 +1,111 @@
+You are working on "Shell Menu Runner" - a modern, zero-dependency Bash task runner with interactive menus.
+
+PROJECT STATUS
+==============
+Version: v1.6.1 (Code Quality Release)
+Lines: 2682 (run.sh) | Shellcheck: 0 errors, 0 warnings ✅
+Features: 30+ | Default profiles: 18 | Zero dependencies
+
+CORE TECHNOLOGY
+===============
+Language: Bash 3.2+ (POSIX-compatible, strict mode: set -euo pipefail)
+Target: Linux, macOS, BSD with Zsh/Bash
+Install: curl -fsSL https://github.com/mariopeters/shell-menu-runner/raw/main/run.sh | bash
+
+ARCHITECTURE
+============
+
+Main Components:
+- run.sh (2682L): Single-file task runner with full feature set
+- install.sh (369L): Installer with 18 profile templates
+- completions/_run: Zsh completion integration
+- integrations/: Alfred, Raycast, Zsh widget support
+
+Key Systems:
+1. Task Format: LEVEL|NAME|CMD|DESC (pipe-delimited)
+   - LEVEL: 0 (root), 1+ (submenu depth)
+   - CMD: task:subtask, <<Dropdown>>, [depends:task1,task2], [timeout:30]
+2. Profile System: .tasks.<name> (local/global with .local/.dev variants)
+3. Smart Init: Auto-detect Node/Docker/Go/Rust/Terraform + create .tasks.git/.tasks.docker
+4. Multi-file Merge: .tasks + .tasks.local + .tasks.dev combined
+5. Caching: Session-scoped /tmp/run_cache_$$ with 60s TTL, mtime-based invalidation
+6. Parallel Execution: RUN_PARALLEL_DEPS=1 for concurrent dependencies
+7. Theme System: CYBER, MONO, DARK, LIGHT (with spinner & status bar)
+
+RECENT IMPROVEMENTS (v1.6.0)
+=============================
+- ✅ 18 profile templates (6 server, 6 dev/devops, 6 core)
+- ✅ UX: Profile filter [/], search history [↑↓], help panel [?]
+- ✅ Performance: Parallel deps, profile caching, fast grep
+- ✅ UI: 4 themes, loading spinner, status bar
+- ✅ Code quality: Refactored, 100% shellcheck-clean
+- ✅ Helper functions: info(), warn(), error(), success(), dim()
+
+NEXT PRIORITIES
+===============
+1. Progress Bar: Visual feedback for long tasks (% complete markers)
+2. Enhanced Logging: Structured execution logs with JSON export
+3. Multi-Profile Parallel: Run same task across multiple profiles
+4. Task Scheduling: Cron-like scheduling for tasks
+5. Metrics: Execution time aggregation, performance dashboards
+
+CODING STANDARDS
+================
+- Google Shell Style Guide (https://google.github.io/styleguide/shellguide.html)
+- shellcheck -x run.sh (must pass with 0 errors, 0 warnings)
+- Syntax: bash -n run.sh (before any commit)
+- Backward compatibility: ALWAYS - don't break existing .tasks files
+- Variable quoting: "${var}" not $var to prevent word splitting
+- Functions return 0/1, use $(func) for output
+- Comments for non-obvious code, use meaningful variable names
+
+FILE STRUCTURE
+==============
+shell-menu-runner/
+├── run.sh                  # Main script (executable)
+├── install.sh              # Installer + 18 profile templates
+├── README.md               # Full documentation (EN + DE)
+├── CHANGELOG.md            # Version history & features
+├── scripts/
+│   └── release.sh          # Release automation
+├── completions/
+│   └── _run               # Zsh completion
+├── integrations/
+│   ├── alfred/            # Alfred workflow
+│   ├── raycast/           # Raycast extension
+│   └── zsh/               # Zsh widget
+├── docs/
+│   └── screenshot.svg     # Visual demo
+└── .github/workflows/
+    └── release.yml        # CI/CD pipeline
+
+TESTING REQUIREMENTS
+====================
+Before committing:
+  bash -n run.sh             # Syntax check
+  shellcheck -x run.sh       # Linter (must pass 0/0)
+  ./run.sh --help            # Help display
+  ./run.sh --validate demo   # Profile validation
+
+For PRs:
+  - Test main menu navigation
+  - Test profile switching
+  - Test hotkeys 1-9
+  - Test filters [/], [?], [p]
+  - Test dependencies [depends:...]
+  - Test parallel execution RUN_PARALLEL_DEPS=1
+
+GIT WORKFLOW
+============
+Branch naming: feature/*, bugfix/*, refactor/*
+Commit style: "feat: description" or "fix: description"
+Tags: v1.6.1-rc, v1.6.1, etc.
+Release: ./scripts/release.sh (interactive or --release flag)
+
+BE PRECISE & CONCISE
+====================
+- Short answers, no unnecessary explanations
+- Focus on practical implementation
+- Reference line numbers when discussing code
+- Keep context in mind (maintain backward compatibility)
+- Test edge cases (empty files, special chars, long lines)

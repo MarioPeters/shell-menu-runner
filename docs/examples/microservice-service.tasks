@@ -1,0 +1,53 @@
+# Microservice: Auth Service Tasks
+# Copy to services/auth/ as .tasks.auth
+# Run: run auth <task>
+
+# Setup
+0|Install|npm install|Install dependencies
+1|Db Init|npm run db:init|Initialize database
+2|Seeds|npm run db:seed|Seed test data
+
+# Development
+3|Dev|npm run dev|Start dev server (with reload)
+4|Test Local|npm run test|Run tests locally
+5|Build Local|npm run build|Build locally
+
+# Quality Assurance
+6|Lint|npm run lint|Lint code
+7|Format|npm run format|Format code
+8|Type Check|npm run type-check|Type checking
+9|QA|npm run lint && npm run format && npm run type-check depends:6,7,8|Full QA
+
+# Testing
+10|Unit Tests|npm run test:unit|Unit tests
+11|Integration|npm run test:integration|Integration tests
+12|E2E|npm run test:e2e|End-to-end tests
+13|All Tests|npm run test depends:10,11,12|All tests (parallel)
+14|Coverage|npm run test:coverage|Coverage report
+
+# Docker
+15|Docker Build|docker build -t auth:latest .|Build Docker image
+16|Docker Run|docker run -p 3001:3001 auth:latest|Run in Docker
+17|Docker Test|docker build -f Dockerfile.test -t auth:test . && docker run auth:test|Test in Docker
+
+# Deployment
+18|Deploy Dev|kubectl apply -f k8s/dev/auth.yaml|Deploy to dev
+19|Deploy Stage|kubectl apply -f k8s/staging/auth.yaml|Deploy to staging
+20|Deploy Prod|kubectl apply -f k8s/prod/auth.yaml|Deploy to production
+
+# Status
+21|Health|curl -s http://localhost:3001/health | jq|Check health
+22|Status|kubectl get pods -l app=auth|Pod status
+23|Logs|kubectl logs -f deployment/auth|View logs
+24|Metrics|curl -s http://localhost:3001/metrics|Metrics
+
+# Maintenance
+25|Restart Dev|kubectl rollout restart deployment/auth -n dev|Restart dev
+26|Restart Stage|kubectl rollout restart deployment/auth -n staging|Restart staging
+27|Restart Prod|kubectl rollout restart deployment/auth -n prod|Restart prod
+28|Rollback|kubectl rollout undo deployment/auth|Rollback to previous
+
+# Database
+29|Db Migrate|npm run db:migrate|Run migrations
+30|Db Rollback|npm run db:rollback|Rollback migrations
+31|Db Reset|npm run db:reset|Reset database

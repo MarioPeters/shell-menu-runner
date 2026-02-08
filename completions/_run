@@ -1,0 +1,170 @@
+#compdef run
+
+# Zsh completion for Shell Menu Runner
+# Installation: copy to ~/.zsh/completions/_run or /usr/share/zsh/site-functions/_run
+
+_run_tasks() {
+    local -a tasks
+    local config_path=""
+    
+    # Find local .tasks file
+    if [ -f ".tasks" ]; then
+        config_path=".tasks"
+    elif [ -f "$HOME/.tasks" ]; then
+        config_path="$HOME/.tasks"
+    fi
+    
+    if [ -n "$config_path" ] && [ -f "$config_path" ]; then
+        # Extract task names (second field after LEVEL|)
+        tasks=($(grep "^0|" "$config_path" | cut -d'|' -f2 2>/dev/null))
+    fi
+    
+    if [ ${#tasks[@]} -gt 0 ]; then
+        _describe 'tasks' tasks
+    fi
+}
+
+_run_tasks_from_file() {
+    local file="$1"
+    local -a tasks
+    [ -z "$file" ] && return 0
+    [ ! -f "$file" ] && return 0
+    tasks=($(grep "^0|" "$file" | cut -d'|' -f2 2>/dev/null))
+    if [ ${#tasks[@]} -gt 0 ]; then
+        _describe 'tasks' tasks
+    fi
+}
+
+_run_resolve_profile() {
+    local profile="$1"
+    local resolved="$profile"
+    if [ -f "$HOME/.run_aliases" ]; then
+        local line alias_name target
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            case "$line" in
+                \#*) continue ;;
+            esac
+            alias_name="${line%%=*}"
+            target="${line#*=}"
+            if [ "$alias_name" = "$profile" ]; then
+                resolved="$target"
+                break
+            fi
+        done < "$HOME/.run_aliases"
+    fi
+    echo "$resolved"
+}
+
+_run_find_profile_file() {
+    local profile="$1"
+    local d="$PWD"
+    while [[ "$d" != "/" ]]; do
+        if [ -f "$d/.tasks.$profile" ]; then
+            echo "$d/.tasks.$profile"
+            return 0
+        fi
+        d="${d:h}"
+    done
+    if [ -f "$HOME/.tasks.$profile" ]; then
+        echo "$HOME/.tasks.$profile"
+        return 0
+    fi
+    return 1
+}
+
+_run_profiles() {
+    local -a profiles
+    local -A seen
+    local add_profile
+    add_profile() {
+        local name="$1"
+        local desc="$2"
+        if [ -n "$name" ] && [ -z "${seen[$name]}" ]; then
+            if [ -n "$desc" ]; then
+                profiles+=("${name}:${desc}")
+            else
+                profiles+=("${name}")
+            fi
+            seen[$name]=1
+        fi
+    }
+    local d="$PWD"
+    while [[ "$d" != "/" ]]; do
+        local f
+        for f in "$d"/.tasks.*(N); do
+            add_profile "${f:t#.tasks.}" ""
+        done
+        d="${d:h}"
+    done
+    local f
+    for f in "$HOME"/.tasks.*(N); do
+        add_profile "${f:t#.tasks.}" ""
+    done
+
+    if [ -f "$HOME/.run_aliases" ]; then
+        local line alias_name target
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            case "$line" in
+                \#*) continue ;;
+            esac
+            alias_name="${line%%=*}"
+            target="${line#*=}"
+            add_profile "$alias_name" "alias to $target"
+        done < "$HOME/.run_aliases"
+    done
+    if [ ${#profiles[@]} -gt 0 ]; then
+        _describe 'profiles' profiles
+    fi
+}
+
+_run() {
+    local -a subcommands
+    
+    subcommands=(
+        "--help:Show help message"
+        "--version:Show version"
+        "--init:Initialize new .tasks file"
+        "--update:Self-update to latest version"
+        "--global:Use global task file"
+        "--edit:Edit task configuration"
+        "-h:Show help message"
+        "-v:Show version"
+        "-e:Edit task configuration"
+    )
+    
+    case "$words[2]" in
+        --global|--edit|-e)
+            # No task completion after these flags
+            return 0
+            ;;
+        *)
+            # Show available commands and tasks
+            _arguments \
+                '(--help -h)'{--help,-h}'[Show help message]' \
+                '(--version -v)'{--version,-v}'[Show version]' \
+                '--init[Initialize new .tasks file]' \
+                '--update[Self-update to latest version]' \
+                '--global[Use global task file]' \
+                '(--edit -e)'{--edit,-e}'[Edit task configuration]'
+            
+            if (( CURRENT == 2 )); then
+                _run_profiles
+            else
+                local profile_input="${words[2]}"
+                local resolved_profile
+                resolved_profile="$(_run_resolve_profile "$profile_input")"
+                local profile_file
+                profile_file="$(_run_find_profile_file "$resolved_profile")"
+                if [ -n "$profile_file" ]; then
+                    _run_tasks_from_file "$profile_file"
+                else
+                    _run_tasks
+                fi
+            fi
+            ;;
+    esac
+}
+
+_run

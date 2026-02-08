@@ -1,3 +1,6 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
+
 function _open_runner_widget() {
     local PREV_BUFFER="$BUFFER"; local PREV_CURSOR="$CURSOR"
     BUFFER=""; zle redisplay

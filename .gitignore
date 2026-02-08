@@ -1,1 +1,25 @@
-README.local.md
+# Development files
+README.dev.md
+ai-promt.txt
+REFACTORING_ANALYSIS.md
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Extensions
+.continue/
+
+# Logs
+*.log
+
+# Temporary
+*.tmp
+*.bak
