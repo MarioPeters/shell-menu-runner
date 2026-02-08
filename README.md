@@ -119,7 +119,7 @@ Version 1.7.0 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 - **Magic Installer:** One-liner installer via `install.sh`.
 - **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
 - Without `RUN_EXPECTED_SHA256`, `run --update` asks for confirmation before applying the download.
-- Recommended hash for v1.7.0: (TBD after v1.7.0 release).
+- Recommended hash for v1.7.0: `e47f3ed99a347b814f3f660a0a72dcf74b25d63973e97a19cdf2700742f72846`
 
 **14) 🔒 Security Notes**
 
@@ -501,7 +501,7 @@ Version 1.7.0 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 - **Magic Installer:** One-liner Installer via `install.sh`.
 - **Integritätsprüfung (optional):** Setze `RUN_EXPECTED_SHA256=<hash>` vor `run --update` um das Download zu verifizieren.
 - Ohne `RUN_EXPECTED_SHA256` fragt `run --update` vor dem Anwenden nach Bestätigung.
-- Empfohlener Hash für v1.7.0: (wird nach v1.7.0 Release verfügbar).
+- Empfohlener Hash für v1.7.0: `e47f3ed99a347b814f3f660a0a72dcf74b25d63973e97a19cdf2700742f72846`
 
 **14) 🔒 Sicherheitshinweise**
 
