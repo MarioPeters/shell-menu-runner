@@ -1,0 +1,50 @@
+# Docker Compose for Shell Menu Runner Development
+version: "3.8"
+
+services:
+  # Main runner service
+  runner:
+    build:
+      context: ..
+      dockerfile: build-platform/Dockerfile
+    image: shell-menu-runner:dev
+    container_name: shell-menu-runner-dev
+    volumes:
+      - ../:/workspace:rw
+      - runner-cache:/home/runuser/.run_cache
+    environment:
+      - RUN_DEBUG=0
+      - RUN_PARALLEL_DEPS=1
+      - RUN_CACHE_PROFILES=1
+    working_dir: /workspace
+    command: --help
+    stdin_open: true
+    tty: true
+
+  # Test runner
+  test:
+    build:
+      context: ..
+      dockerfile: build-platform/Dockerfile
+    image: shell-menu-runner:test
+    container_name: shell-menu-runner-test
+    volumes:
+      - ../:/workspace:ro
+    working_dir: /workspace
+    command: bash build-platform/tests/test-runner.sh
+
+  # Builder service
+  builder:
+    build:
+      context: ..
+      dockerfile: build-platform/Dockerfile
+    image: shell-menu-runner:builder
+    container_name: shell-menu-runner-builder
+    volumes:
+      - ../:/workspace:rw
+    working_dir: /workspace
+    command: bash build-platform/builder.sh build all
+
+volumes:
+  runner-cache:
+    driver: local

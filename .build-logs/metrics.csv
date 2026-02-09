@@ -1,0 +1,4 @@
+timestamp,target,size_bytes,lines,duration_sec
+1770646260,dev,120936,3198,0
+1770646325,dev,120936,3198,0
+1770646325,prod,110061,2674,0

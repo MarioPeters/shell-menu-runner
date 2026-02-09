@@ -1,0 +1,5 @@
+# Shell Menu Runner Settings
+THEME=CYBER
+LANG=DE
+COLS_MIN=1
+COLS_MAX=3
