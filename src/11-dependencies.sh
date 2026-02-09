@@ -26,11 +26,11 @@ execute_task_deps() {
         local -a dep_logs=()
         
         for dep in "${deps[@]}"; do
-            dep=$(echo "$dep" | xargs)
+            dep=$(trim_whitespace "$dep")
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
             
-            # Create log file for this dependency
-            local dep_log="/tmp/run_dep_${dep}_$$.log"
+            # Log in CACHE_DIR ablegen — wird bei EXIT automatisch bereinigt
+            local dep_log="${CACHE_DIR}/dep_${dep}_$$.log"
             dep_logs+=("$dep_log")
             dep_names+=("$dep")
             
@@ -69,7 +69,7 @@ execute_task_deps() {
     else
         # Sequential execution (default)
         for dep in "${deps[@]}"; do
-            dep=$(echo "$dep" | xargs)
+            dep=$(trim_whitespace "$dep")
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
             
             # Find and execute the dependency task using helper
@@ -110,11 +110,11 @@ execute_multi_profile_task() {
         local -a profile_logs=()
         
         for prof in "${profiles[@]}"; do
-            prof=$(echo "$prof" | xargs)
+            prof=$(trim_whitespace "$prof")
             echo -e "  ${COLOR_DIM}→ [$prof] $task_name${COLOR_RESET}"
             
-            # Create log file for this profile execution
-            local prof_log="/tmp/run_multi_prof_${prof}_$$.log"
+            # Log in CACHE_DIR ablegen — wird bei EXIT automatisch bereinigt
+            local prof_log="${CACHE_DIR}/multi_prof_${prof}_$$.log"
             profile_logs+=("$prof_log")
             profile_names+=("$prof")
             
@@ -161,7 +161,7 @@ execute_multi_profile_task() {
     else
         # Sequential execution
         for prof in "${profiles[@]}"; do
-            prof=$(echo "$prof" | xargs)
+            prof=$(trim_whitespace "$prof")
             echo -e "  ${COLOR_INFO}→ Profile: $prof${COLOR_RESET}"
             
             # Load profile configuration
@@ -205,33 +205,35 @@ analyze_project() {
         return 1
     fi
     
-    # Count tasks
-    local total_tasks
-    total_tasks=$(grep -c "^[0-9]" "$config_file" 2>/dev/null || echo 0)
-    
+    # Einmaliger awk-Durchlauf statt 10 separater grep-Aufrufe
+    local total_tasks level_0 level_1 deps_count parallel_count \
+          has_lint has_test has_build has_deploy test_count
+    read -r total_tasks level_0 level_1 deps_count parallel_count \
+             has_lint has_test has_build has_deploy test_count < <(
+        awk '
+            /^[0-9]/                           { tot++ }
+            /^0\|/                             { l0++ }
+            /^1\|/                             { l1++ }
+            /depends:/                         { dep++ }
+            /--parallel/                       { par++ }
+            tolower($0) ~ /lint|eslint|pylint/ { lint++ }
+            tolower($0) ~ /test|jest|pytest/   { tst++ }
+            tolower($0) ~ /build|compile/      { bld++ }
+            tolower($0) ~ /deploy|push|release/{ dpl++ }
+            tolower($0) ~ /test/               { tc++ }
+            END { print (tot+0),(l0+0),(l1+0),(dep+0),(par+0),(lint+0),(tst+0),(bld+0),(dpl+0),(tc+0) }
+        ' "$config_file" 2>/dev/null
+    )
+
     echo -e "\n${COLOR_SEL}📊 Project Analysis${COLOR_RESET}"
     echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}"
     
     # 1. Basic Stats
     echo -e "${COLOR_INFO}📈 Statistics:${COLOR_RESET}"
     echo -e "  ${COLOR_DIM}Total Tasks:${COLOR_RESET} $total_tasks"
-    
-    # Count levels
-    local level_0
-    local level_1
-    level_0=$(grep -c "^0|" "$config_file" 2>/dev/null || echo 0)
-    level_1=$(grep -c "^1|" "$config_file" 2>/dev/null || echo 0)
     echo -e "  ${COLOR_DIM}Main Tasks (Level 0):${COLOR_RESET} $level_0"
     [ "$level_1" -gt 0 ] && echo -e "  ${COLOR_DIM}Sub Tasks (Level 1):${COLOR_RESET} $level_1"
-    
-    # Count dependencies
-    local deps_count
-    deps_count=$(grep -c "depends:" "$config_file" 2>/dev/null || echo 0)
     echo -e "  ${COLOR_DIM}Tasks with Dependencies:${COLOR_RESET} $deps_count"
-    
-    # Count parallel markers
-    local parallel_count
-    parallel_count=$(grep -c "\-\-parallel" "$config_file" 2>/dev/null || echo 0)
     echo -e "  ${COLOR_DIM}Parallel-ready Tasks:${COLOR_RESET} $parallel_count"
     
     echo ""
@@ -262,23 +264,13 @@ analyze_project() {
         echo -e "  ${COLOR_INFO}⚡${COLOR_RESET}  ${COLOR_DIM}Parallel execution not configured:${COLOR_RESET}"
         echo -e "     Enable for faster execution:"
         echo -e "     ${COLOR_DIM}export RUN_PARALLEL_DEPS=1${COLOR_RESET}"
-        local test_count
-        test_count=$(grep -ci "test" "$config_file" 2>/dev/null || echo 0)
         if [ "$test_count" -gt 2 ]; then
             echo -e "     ${COLOR_DIM}Performance boost expected: ~2-3x faster${COLOR_RESET}"
         fi
         echo ""
     fi
     
-    # Check for common patterns
-    local has_lint
-    local has_test
-    local has_build
-    local has_deploy
-    has_lint=$(grep -Eci "lint|eslint|pylint" "$config_file" 2>/dev/null || echo 0)
-    has_test=$(grep -Eci "test|jest|pytest" "$config_file" 2>/dev/null || echo 0)
-    has_build=$(grep -Eci "build|compile" "$config_file" 2>/dev/null || echo 0)
-    has_deploy=$(grep -Eci "deploy|push|release" "$config_file" 2>/dev/null || echo 0)
+    # (has_lint/has_test/has_build/has_deploy/test_count wurden bereits oben via awk befüllt)
     
     echo -e "${COLOR_INFO}✓ Quality Score:${COLOR_RESET}"
     [ "$has_lint" -gt 0 ] && echo -e "  ✓ ${COLOR_SEL}Linting${COLOR_RESET} (code quality)" || echo -e "  ✗ ${COLOR_DIM}Linting${COLOR_RESET} (code quality) - consider adding"
@@ -294,15 +286,15 @@ analyze_project() {
     
     if [ "$total_tasks" -lt 20 ] && [ "$deps_count" -eq 0 ]; then
         echo -e "  1. Add dependencies to create task workflows"
-        ((quick_wins+=1))
+        quick_wins=$((quick_wins + 1))
     fi
-    
     if [ "$parallel_count" -eq 0 ] && [ "$deps_count" -gt 0 ]; then
-        echo -e "  $((quick_wins+=1)). Enable RUN_PARALLEL_DEPS=1 for speed boost"
+        quick_wins=$((quick_wins + 1))
+        echo -e "  ${quick_wins}. Enable RUN_PARALLEL_DEPS=1 for speed boost"
     fi
-    
     if [ "$total_tasks" -gt 80 ]; then
-        echo -e "  $((quick_wins+=1)). Create 2-3 profiles to reduce menu clutter"
+        quick_wins=$((quick_wins + 1))
+        echo -e "  ${quick_wins}. Create 2-3 profiles to reduce menu clutter"
     fi
     
     if [ "$quick_wins" -eq 0 ]; then
@@ -328,16 +320,18 @@ analyze_project() {
 # ==============================================================================
 
 find_task_in_menu() {
-    # Find task by name in menu_options and execute callback
+    # Find task by name in menu_options and execute callback.
+    # menu_options format: level|name|cmd|desc — skip level field with _level.
     local search_name="$1"
     local callback="$2"
     local -a opts
     IFS=$'\n' read -d '' -r -a opts < <(get_menu_options) || true
     
     for opt in "${opts[@]}"; do
-        IFS='|' read -r opt_name opt_cmd opt_desc <<< "$opt"
+        IFS='|' read -r _level opt_name opt_cmd opt_desc <<< "$opt"
         if [ "$opt_name" = "$search_name" ]; then
-            eval "$callback \"$opt_name\" \"$opt_cmd\" \"$opt_desc\""
+            # Direkter Funktionsaufruf statt eval: schneller und sicherer
+            "$callback" "$opt_name" "$opt_cmd" "$opt_desc"
             return 0
         fi
     done
@@ -363,8 +357,8 @@ preview_task() {
         echo -e "${COLOR_WARN}⚠ Requires confirmation${COLOR_RESET}\n"
     fi
     
-    # Check for inputs
-    if echo "$cmd" | grep -q '<<'; then
+    # Bash-Regex statt echo|grep-Fork
+    if [[ "$cmd" == *'<<'* ]]; then
         echo -e "${COLOR_INFO}ℹ This task has inputs that will be prompted${COLOR_RESET}\n"
     fi
     
@@ -383,5 +377,5 @@ preview_task() {
     fi
     
     echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-    read -n1 -rs
+    consume_keypress
 }

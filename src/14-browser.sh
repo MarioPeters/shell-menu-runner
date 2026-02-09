@@ -30,7 +30,7 @@ file_browser() {
         echo "4) Browse all files"
         echo "0) Back"
         echo ""
-        read -rsn1 choice
+        choice=$(read_key) || break
         
         case "$choice" in
             "1")
@@ -61,11 +61,12 @@ file_browser() {
                 echo -e "${COLOR_INFO}Choose creation method:${COLOR_RESET}"
                 echo "1) Open in editor"
                 echo "2) Paste content"
-                read -rsn1 method
+                method=$(read_key) || continue
                 
                 case "$method" in
                     "1")
                         ${EDITOR:-nano} "$filepath"
+                        stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                         ;;
                     "2")
                         echo -e "${COLOR_INFO}Paste content (Ctrl+D to save):${COLOR_RESET}"
@@ -77,9 +78,19 @@ file_browser() {
                 ;;
             "2")
                 [ -f ".tasks" ] && ${EDITOR:-nano} ".tasks" || echo -e "${COLOR_ERR}.tasks not found${COLOR_RESET}"
+                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                 ;;
             "3")
-                [ -f ".env" ] && ${EDITOR:-nano} ".env" || { echo "Create .env? [y/N] "; read -n1 -r; [ "$REPLY" = "y" ] && ${EDITOR:-nano} ".env"; }
+                if [ -f ".env" ]; then
+                    ${EDITOR:-nano} ".env"                    stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin                else
+                    echo -e "\n${COLOR_INFO}Create .env? [y/N]${COLOR_RESET} "
+                    read -n 1 -r REPLY
+                    echo ""
+                    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                        touch ".env"
+                        ${EDITOR:-nano} ".env"
+                    fi
+                fi
                 ;;
             "4")
                 local -a all_files=()
@@ -96,10 +107,13 @@ file_browser() {
                         idx=$((idx + 1))
                     done
                     echo -e "\n[1-9] Edit [q]uit"
-                    read -rsn1 fkey
+                    fkey=$(read_key) || break
                     if [[ "$fkey" =~ [1-9] ]]; then
                         local fsel=$((fkey - 1))
-                        [ "$fsel" -lt "${#all_files[@]}" ] && ${EDITOR:-nano} "${all_files[$fsel]}"
+                        if [ "$fsel" -lt "${#all_files[@]}" ]; then
+                            ${EDITOR:-nano} "${all_files[$fsel]}"
+                            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                        fi
                     fi
                 fi
                 ;;

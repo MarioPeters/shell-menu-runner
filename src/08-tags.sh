@@ -4,7 +4,16 @@
 
 extract_tags() {
     local desc="$1"
-    echo "$desc" | grep -o '#[a-zA-Z0-9_-]*' | tr '\n' ' '
+    local result=""
+    # Bash-Regex statt echo|grep|tr (3 externe Prozesse gespart)
+    local rest="$desc"
+    while [[ "$rest" =~ (#[a-zA-Z0-9_-]+) ]]; do
+        local _tag="${BASH_REMATCH[1]}"
+        result+="$_tag "
+        # SC2295: BASH_REMATCH in ${#} als Pattern muss über Variable referenziert werden
+        rest="${rest#*"$_tag"}"
+    done
+    printf '%s' "$result"
 }
 
 has_tag() {
@@ -14,22 +23,21 @@ has_tag() {
 }
 
 get_all_tags() {
-    local all_output=""
-    if [ "${#task_config_files[@]}" -gt 0 ]; then
-        all_output=$(merge_configs)
-    elif [ -f "$config_path" ]; then
-        all_output=$(cat "$config_path")
-    fi
-    
     local -a tags=()
+    # Process-Substitution: kein all_output-String im Speicher
     while IFS='|' read -r level name cmd desc; do
         local task_tags
         task_tags=$(extract_tags "$desc")
         for tag in $task_tags; do
             tags+=("$tag")
         done
-    done <<< "$all_output"
-    
+    done < <(
+        if [ "${#task_config_files[@]}" -gt 0 ]; then
+            cat "${task_config_files[@]}" 2>/dev/null || true
+        elif [ -f "$config_path" ]; then
+            cat "$config_path"
+        fi
+    )
     # Unique sort
     printf "%s\n" "${tags[@]}" | sort -u
 }
@@ -62,7 +70,7 @@ show_tag_menu() {
     echo "[1-9] Filter [q]uit"
     
     while true; do
-        read -rsn1 key
+        key=$(read_key) || break
         case "$key" in
             "0")
                 tag_filter=""

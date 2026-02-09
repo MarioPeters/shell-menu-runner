@@ -10,6 +10,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SRC_DIR="$SCRIPT_DIR/src"
 readonly OUTPUT_FILE="$SCRIPT_DIR/run.sh"
 readonly TEMP_FILE="/tmp/run-build-$$.sh"
+# Temp-Datei immer aufräumen, auch bei Fehler-Abbruch durch set -e
+trap 'rm -f "$TEMP_FILE"' EXIT
 
 # Color output
 COLOR_INFO=$'\e[33m'
@@ -52,43 +54,36 @@ MODULES=(
 
 check_modules() {
     info "Checking source modules..."
-    local missing=0
-    
     for module in "${MODULES[@]}"; do
-        if [ ! -f "$SRC_DIR/$module" ]; then
-            error "Missing module: $module"
-            missing=1
-        fi
+        # error() ruft exit 1 — kein missing-Zähler nötig
+        [ -f "$SRC_DIR/$module" ] || error "Missing module: $module"
     done
-    
-    [ "$missing" -eq 0 ] && success "All modules found"
+    success "All modules found"
 }
 
 build_full() {
     info "Building full version..."
-    
-    # Start with empty temp file
-    > "$TEMP_FILE"
-    
-    # Combine all modules
+
+    local -a files=()
     for module in "${MODULES[@]}"; do
         info "  + $module"
-        
-        # Skip shebang in non-header modules
-        if [ "$module" != "00-header.sh" ]; then
-            grep -v '^#!/bin/bash' "$SRC_DIR/$module" >> "$TEMP_FILE" || true
-        else
-            cat "$SRC_DIR/$module" >> "$TEMP_FILE"
-        fi
-        
-        # Add separator comment
-        echo "" >> "$TEMP_FILE"
+        files+=("$SRC_DIR/$module")
     done
-    
-    # Move to output
+
+    # Einzelner awk-Durchlauf über alle Module — 1 Fork statt 34 (2×17).
+    # Shebang wird nur aus Nicht-Header-Modulen entfernt;
+    # zwischen Modulen wird eine Leerzeile als Trenner eingefügt.
+    local header="$SRC_DIR/00-header.sh"
+    awk -v header="$header" '
+        FNR == 1 && NR > 1  { print "" }
+        FILENAME == header  { print; next }
+        /^#!\/bin\/bash/    { next }
+        { print }
+    ' "${files[@]}" > "$TEMP_FILE"
+
     mv "$TEMP_FILE" "$OUTPUT_FILE"
     chmod +x "$OUTPUT_FILE"
-    
+
     success "Built: $OUTPUT_FILE"
 }
 
@@ -100,9 +95,9 @@ build_minified() {
     
     # Create minified version (remove comments, empty lines)
     local min_file="$SCRIPT_DIR/run.min.sh"
-    
-    grep -v '^[[:space:]]*#' "$OUTPUT_FILE" | \
-    grep -v '^[[:space:]]*$' > "$min_file"
+    # awk statt grep: Shebang (Zeile 1) wird immer beibehalten —
+    # grep -Ev '^#...' hat den Shebang mitgestripped (Bug-Fix).
+    awk 'NR==1 || (!/^[[:space:]]*#/ && !/^[[:space:]]*$/)' "$OUTPUT_FILE" > "$min_file"
     
     chmod +x "$min_file"
     
@@ -111,32 +106,37 @@ build_minified() {
 
 calculate_stats() {
     info "Build statistics:"
-    
-    local total_lines=0
-    local total_size=0
-    
+
+    local total_lines=0 total_size=0
+    local -a files=()
     for module in "${MODULES[@]}"; do
-        local file="$SRC_DIR/$module"
-        local lines=$(wc -l < "$file" | tr -d ' ')
-        local size=$(wc -c < "$file" | tr -d ' ')
-        
-        total_lines=$((total_lines + lines))
-        total_size=$((total_size + size))
-        
-        printf "  %-20s %5d lines  %6d bytes\n" "$module" "$lines" "$size"
+        files+=("$SRC_DIR/$module")
     done
-    
+
+    # Einzelner wc-Aufruf für alle Module — 1 Fork statt 2×17=34.
+    # wc -lc gibt bei mehreren Dateien am Ende eine "total"-Zeile aus.
+    while read -r lines size file; do
+        local bname="${file##*/}"
+        if [[ "$bname" == "total" ]]; then
+            total_lines=$lines
+            total_size=$size
+        else
+            printf "  %-20s %5d lines  %6d bytes\n" "$bname" "$lines" "$size"
+        fi
+    done < <(wc -lc "${files[@]}")
+
     echo ""
     printf "  %-20s %5d lines  %6d bytes\n" "TOTAL" "$total_lines" "$total_size"
-    
+
     if [ -f "$OUTPUT_FILE" ]; then
-        local output_lines=$(wc -l < "$OUTPUT_FILE" | tr -d ' ')
-        local output_size=$(wc -c < "$OUTPUT_FILE" | tr -d ' ')
+        # wc -lc gibt bei Einzeldatei: lines bytes filename in einer Zeile
+        local output_lines output_size _dummy
+        read -r output_lines output_size _dummy < <(wc -lc "$OUTPUT_FILE")
         printf "  %-20s %5d lines  %6d bytes\n" "run.sh" "$output_lines" "$output_size"
-        
-        # Calculate SHA256
+
         if command -v shasum &>/dev/null; then
-            local sha=$(shasum -a 256 "$OUTPUT_FILE" | cut -d' ' -f1)
+            local sha
+            sha=$(shasum -a 256 "$OUTPUT_FILE" | awk '{print $1}')
             echo ""
             info "SHA256: $sha"
         fi
@@ -197,7 +197,7 @@ main() {
     local mode="full"
     local run_stats=0
     local run_validate=0
-    local run_shellcheck=0
+    local do_shellcheck=0  # Umbenennung: vermeidet Namenskollision mit Funktion run_shellcheck()
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -223,13 +223,13 @@ main() {
                 shift
                 ;;
             -c|--check)
-                run_shellcheck=1
+                do_shellcheck=1
                 shift
                 ;;
             -a|--all)
                 run_stats=1
                 run_validate=1
-                run_shellcheck=1
+                do_shellcheck=1
                 shift
                 ;;
             *)
@@ -255,7 +255,7 @@ main() {
     esac
     
     [ "$run_validate" -eq 1 ] && validate_syntax
-    [ "$run_shellcheck" -eq 1 ] && run_shellcheck
+    [ "$do_shellcheck" -eq 1 ] && run_shellcheck
     [ "$run_stats" -eq 1 ] && calculate_stats
     
     echo ""

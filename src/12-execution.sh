@@ -4,16 +4,24 @@
 
 select_dropdown() {
     local options_str="$1"
-    local IFS=','
     local -a options=()
-    if mapfile -t options < <(echo "$options_str" | tr ',' '\n'); then
-        :
-    fi
+    # IFS-Split statt printf|tr-Pipeline: kein Fork, Bash 3.2-kompatibel
+    local -a _raw_opts
+    IFS=',' read -r -a _raw_opts <<< "$options_str"
+    local _opt
+    for _opt in "${_raw_opts[@]}"; do
+        [ -n "$_opt" ] && options+=("$_opt")
+    done
     local selected=0
     local num=${#options[@]}
     
     while true; do
-        clear
+        # Cursor zurück auf 0,0 statt clear → kein Flicker (wie Hauptmenü)
+        if [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_CUP:-}" ]; then
+            echo -ne "$TPUT_CUP"
+        else
+            clear
+        fi
         echo -e "${COLOR_HEAD}$(msg select_option)${COLOR_RESET}"
         for (( i=0; i<num; i++ )); do
             if [ "$i" -eq "$selected" ]; then
@@ -23,18 +31,16 @@ select_dropdown() {
             fi
         done
         echo -e "\n${COLOR_DIM}$(msg dropdown_hint)${COLOR_RESET}"
+        # Rest der Zeilen löschen damit alte Einträge nicht stehen bleiben
+        [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_ED:-}" ] && echo -ne "$TPUT_ED"
         
-        read -rsn1 key
+        key=$(read_key) || return 1
         case "$key" in
-            $'\x1b') 
-                read -rsn2 -t 1 k
-                case "$k" in 
-                    '[A') selected=$((selected - 1));; 
-                    '[B') selected=$((selected + 1));;
-                    '') return 1;; # Pure Escape = cancel
-                esac;;
+            $'\x1b[A'|$'\x1bOA') selected=$((selected - 1));;
+            $'\x1b[B'|$'\x1bOB') selected=$((selected + 1));;
+            $'\x1b') return 1;; # Pure Escape = cancel
             "k") selected=$((selected - 1));; "j") selected=$((selected + 1));;
-            "") echo "${options[$selected]}"; return 0;;
+            $'\r'|"") echo "${options[$selected]}"; return 0;; # Enter
         esac
         if [ "$selected" -lt 0 ]; then
             selected=$((num-1))
@@ -50,19 +56,12 @@ render_progress_bar() {
     local width=${2:-30}
     local filled=$((percent * width / 100))
     local empty=$((width - filled))
-    local i=0
-    
-    printf "%s[" "${COLOR_SEL}"
-    while [ "$i" -lt "$filled" ]; do
-        printf "="
-        i=$((i + 1))
-    done
-    i=0
-    while [ "$i" -lt "$empty" ]; do
-        printf "-"
-        i=$((i + 1))
-    done
-    printf "] %3d%%${COLOR_RESET}" "$percent"
+    local bar_filled bar_empty
+    # printf -v mit Padding baut den Balken in einem einzigen Aufruf (bash 3.1+, kein Loop)
+    printf -v bar_filled '%*s' "$filled" ''
+    printf -v bar_empty  '%*s' "$empty"  ''
+    printf "%s[%s%s] %3d%%${COLOR_RESET}" \
+        "$COLOR_SEL" "${bar_filled// /=}" "${bar_empty// /-}" "$percent"
 }
 
 process_progress_output() {
@@ -88,7 +87,7 @@ process_progress_output() {
     
     # Return line normally if no progress marker
     echo "$line"
-    return 1
+    return 0  # 0 statt 1: stabiler bei set -e, semantisch korrekt (kein Fehler)
 }
 
 execute_task_pipeline() {
@@ -99,7 +98,7 @@ execute_task_pipeline() {
     read -r -a steps <<< "$steps_str"
     echo -e "${COLOR_INFO}$(msg task_depends):${COLOR_RESET}"
     for step in "${steps[@]}"; do
-        step=$(echo "$step" | xargs)
+        step=$(trim_whitespace "$step")
         [ -z "$step" ] && continue
         echo -e "  ${COLOR_DIM}→ $step${COLOR_RESET}"
         if ! find_task_in_menu "$step" 'execute_task'; then
@@ -125,11 +124,11 @@ execute_tasks_parallel() {
     local -a logs=()
     local started=0
     for idx in "${keys[@]}"; do
-        IFS='|' read -r name cmd desc <<< "${menu_options[$idx]}"
+        IFS='|' read -r level name cmd desc <<< "${menu_options[$idx]}"
         if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
             continue
         fi
-        if [[ "$desc" == "[!]"* ]] || echo "$cmd" | grep -q '<<' || [[ "$cmd" == tasks:* ]]; then
+        if [[ "$desc" == "[!]"* ]] || [[ "$cmd" == *"<<"* ]] || [[ "$cmd" == tasks:* ]]; then
             echo -e "${COLOR_WARN}Skipping '$name' (interactive or pipeline).${COLOR_RESET}"
             continue
         fi
@@ -139,10 +138,28 @@ execute_tasks_parallel() {
         start_time=$(date +%s)
         (
             if command -v timeout >/dev/null 2>&1; then
-                timeout "$task_timeout" bash -c "[ \"$active_mode\" == \"local\" ] && cd \"$(dirname \"$config_path\")\"; [ -f \".env\" ] && set -a && source .env && set +a; eval \"$cmd\"" 2>&1 | tee "$log_file"
+                # shellcheck disable=SC2016
+                timeout "$task_timeout" env \
+                    RUN_MODE="$active_mode" \
+                    RUN_DIR="$(dirname "$config_path")" \
+                    RUN_CMD="$cmd" \
+                    bash -c '
+                        [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
+                        [ -f ".env" ] && set -a && source .env && set +a
+                        eval "$RUN_CMD"
+                    ' 2>&1 | tee "$log_file"
                 exit "${PIPESTATUS[0]}"
             else
-                bash -c "[ \"$active_mode\" == \"local\" ] && cd \"$(dirname \"$config_path\")\"; [ -f \".env\" ] && set -a && source .env && set +a; eval \"$cmd\"" 2>&1 | tee "$log_file"
+                # shellcheck disable=SC2016
+                env \
+                    RUN_MODE="$active_mode" \
+                    RUN_DIR="$(dirname "$config_path")" \
+                    RUN_CMD="$cmd" \
+                    bash -c '
+                        [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
+                        [ -f ".env" ] && set -a && source .env && set +a
+                        eval "$RUN_CMD"
+                    ' 2>&1 | tee "$log_file"
                 exit "${PIPESTATUS[0]}"
             fi
         ) &
@@ -170,7 +187,12 @@ execute_tasks_parallel() {
             echo -e "${COLOR_ERR}✗ ${names[$i]}${COLOR_RESET} (${dur}s)"
         fi
     done
-    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; read -r -n1 -s
+    # Parallel tasks may have altered terminal state — restore and suppress echo
+    # before the "press key" prompt so no garbage appears on screen.
+    stty sane 2>/dev/null || true
+    stty -echo 2>/dev/null || true
+    drain_stdin
+    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
 }
 
 execute_task() {
@@ -229,7 +251,7 @@ execute_task() {
     if [ "$dry_run_mode" -eq 1 ]; then
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
         echo -e "${COLOR_DIM}(No actual execution)${COLOR_RESET}\n"
-        echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; read -r -n1 -s
+        echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
         return 0
     fi
     
@@ -237,59 +259,60 @@ execute_task() {
     local start_time
     # Record terminal state before running task
     start_time=$(date +%s)
-    {
-        echo "PRE $(date +%s) TTY=$(tty 2>/dev/null || echo none) STTY=$(stty -g 2>/dev/null || echo '')"
-    } >> /tmp/tty_state.log 2>&1 || true
+    :
     
     # Execute with timeout
     local exit_status=0
     local log_file
     log_file=$(create_log_file "$name")
-    local temp_output
-    temp_output=$(mktemp)
-    trap 'rm -f "$temp_output"' RETURN
-    
-    if command -v timeout >/dev/null 2>&1; then
-        # shellcheck disable=SC1091
-        # Defensive check: ensure the command's first token is a valid executable
-        local first_token
-        first_token=${cmd%% *}
-        if [ -n "$first_token" ] && ! command -v "$first_token" >/dev/null 2>&1 && [[ "$first_token" != */* ]]; then
-            echo -e "\n${COLOR_ERR}Invalid task command: '$first_token' — skipping execution.${COLOR_RESET}"
-            exit_status=127
-        else
-        if timeout "$task_timeout" bash -c "[ \"$active_mode\" == \"local\" ] && cd \"$(dirname \"$config_path\")\"; [ -f \".env\" ] && set -a && source .env && set +a; eval \"$cmd ${args[*]:-}\"" > "$temp_output" 2>&1; then
-            exit_status=0
-        else
-            exit_status=$?
-        fi
-        fi
-        if [ "$exit_status" -eq 124 ]; then
-            echo -e "\n${COLOR_ERR}$(msg task_timeout) (${task_timeout}s).${COLOR_RESET}"
-        fi
+    local temp_output=""
+    temp_output=$(mktemp) || { echo -e "${COLOR_ERR}Cannot create temp file${COLOR_RESET}"; return 1; }
+    trap '[[ -n "${temp_output:-}" ]] && rm -f "$temp_output"' RETURN
+
+    # Bash string-op instead of $(dirname) subshell (called on every task execution)
+    local config_dir="${config_path%/*}"
+    [ "$config_dir" = "$config_path" ] && config_dir="."
+    # Ersten Token prüfen (Schutz vor kaputten Kommandos)
+    local first_token="${cmd%% *}"
+    if [ -n "$first_token" ] && ! command -v "$first_token" >/dev/null 2>&1 && [[ "$first_token" != */* ]]; then
+        echo -e "\n${COLOR_ERR}Invalid task command: '$first_token' — skipping execution.${COLOR_RESET}"
+        exit_status=127
     else
-        # Fallback without timeout
-        # shellcheck disable=SC1091
-        # Defensive check for fallback execution as well
-        local first_token_fallback
-        first_token_fallback=${cmd%% *}
-        if [ -n "$first_token_fallback" ] && ! command -v "$first_token_fallback" >/dev/null 2>&1 && [[ "$first_token_fallback" != */* ]]; then
-            echo -e "\n${COLOR_ERR}Invalid task command: '$first_token_fallback' — skipping execution.${COLOR_RESET}"
-            exit_status=127
-        else
-        if ( [ "$active_mode" == "local" ] && cd "$(dirname "$config_path")"; [ -f ".env" ] && set -a && source .env && set +a; eval "$cmd ${args[*]:-}" ) > "$temp_output" 2>&1; then
-            exit_status=0
-        else
+        # Script-String einmal definieren – shared zwischen timeout- und fallback-Pfad
+        # shellcheck disable=SC2016
+        local _exec_script='
+            [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
+            [ -f ".env" ] && set -a && source .env && set +a
+            eval "$RUN_CMD $RUN_ARGS"
+        '
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$task_timeout" env \
+                RUN_MODE="$active_mode" \
+                RUN_DIR="$config_dir" \
+                RUN_CMD="$cmd" \
+                RUN_ARGS="${args[*]:-}" \
+                bash -c "$_exec_script" > "$temp_output" 2>&1
             exit_status=$?
-        fi
+            [ "$exit_status" -eq 124 ] && \
+                echo -e "\n${COLOR_ERR}$(msg task_timeout) (${task_timeout}s).${COLOR_RESET}"
+        else
+            env \
+                RUN_MODE="$active_mode" \
+                RUN_DIR="$config_dir" \
+                RUN_CMD="$cmd" \
+                RUN_ARGS="${args[*]:-}" \
+                bash -c "$_exec_script" > "$temp_output" 2>&1
+            exit_status=$?
         fi
     fi
     
-    # Process output with progress parsing and logging
+    # Ausgabe verarbeiten: Log-FD einmal öffnen statt pro Zeile open/write/close
+    exec 3>>"$log_file"
     while IFS= read -r line; do
         process_progress_output "$line"
-        echo "$line" >> "$log_file"
+        printf '%s\n' "$line" >&3
     done < "$temp_output"
+    exec 3>&-
     
     local end_time
     end_time=$(date +%s)
@@ -314,16 +337,19 @@ execute_task() {
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
     
     # Reset terminal state to clean state after task execution
-    # This prevents issues with arrow keys and terminal modes
+    # This prevents issues with arrow keys and terminal modes.
+    # Immediately re-disable echo after sane so arrow keys pressed between the
+    # log line and "Taste drücken..." are not echoed as [A / [B garbage.
     stty sane 2>/dev/null || true
+    stty -echo 2>/dev/null || true
     tput cnorm 2>/dev/null || true
-    {
-        echo "POST $(date +%s) TTY=$(tty 2>/dev/null || echo none) STTY=$(stty -g 2>/dev/null || echo '')"
-    } >> /tmp/tty_state.log 2>&1 || true
+    # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
+    # typed during/after task execution) before the "press key" prompt.
+    drain_stdin
     
     # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
-    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; read -r -n1 -s
+    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
 }
 
 # ==============================================================================
@@ -375,12 +401,10 @@ expand_env_vars() {
         guard=$((guard + 1))
         [ "$guard" -gt 50 ] && break
     done
-    echo "$out"
+    # printf statt echo: sicher gegen Werte die mit -e/-n beginnen (z.B. "-n" als Env-Var)
+    printf '%s\n' "$out"
 }
 
-sanitize_filename() {
-    echo "$1" | tr ' ' '_' | tr -cd 'A-Za-z0-9._-'
-}
 
 create_log_file() {
     local task_name="$1"
@@ -391,22 +415,6 @@ create_log_file() {
     echo "$RUN_LOG_DIR/$(date '+%Y-%m-%d_%H-%M-%S')_${safe_name}.log"
 }
 
-copy_to_clipboard() {
-    local text="$1"
-    if command -v pbcopy >/dev/null 2>&1; then
-        echo -n "$text" | pbcopy
-        return 0
-    fi
-    if command -v xclip >/dev/null 2>&1; then
-        echo -n "$text" | xclip -selection clipboard
-        return 0
-    fi
-    if command -v wl-copy >/dev/null 2>&1; then
-        echo -n "$text" | wl-copy
-        return 0
-    fi
-    return 1
-}
 
 extract_field_from_grep() {
     # Extract field from grep result
@@ -415,6 +423,6 @@ extract_field_from_grep() {
     local delimiter="$2"
     local field_idx="$3"
     if [ -f "$config_path" ]; then
-        grep -m1 "$pattern" "$config_path" 2>/dev/null | cut -d"$delimiter" -f"$field_idx" 2>/dev/null | xargs || true
+        awk -F"$delimiter" -v pat="$pattern" -v idx="$field_idx" '$0 ~ pat {val=$idx; gsub(/^[ \t]+|[ \t]+$/, "", val); print val; exit}' "$config_path" 2>/dev/null || true
     fi
 }

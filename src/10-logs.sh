@@ -13,15 +13,7 @@ add_to_history() {
     echo "$timestamp | $status | $task_name | exit:$exit_code | time:${exec_time}s" >> "$RUN_HISTORY_FILE"
     
     # Keep history file size manageable
-    if [ -f "$RUN_HISTORY_FILE" ]; then
-        local lines
-        lines=$(wc -l < "$RUN_HISTORY_FILE" || echo 0)
-        if [ "$lines" -gt "$RUN_HISTORY_MAX" ]; then
-            if tail -n "$RUN_HISTORY_MAX" "$RUN_HISTORY_FILE" > "${RUN_HISTORY_FILE}.tmp"; then
-                mv "${RUN_HISTORY_FILE}.tmp" "$RUN_HISTORY_FILE"
-            fi
-        fi
-    fi
+    trim_file_to_lines "$RUN_HISTORY_FILE" "$RUN_HISTORY_MAX"
 
     add_to_recent "$task_name" "$exec_time"
 }
@@ -35,9 +27,10 @@ show_history() {
         local lastlines
         lastlines=$(tail -20 "$RUN_HISTORY_FILE")
         while IFS= read -r line; do
-            local status
-            status=$(echo "$line" | cut -d'|' -f2 | xargs)
-            if [ "$status" = "✔" ]; then
+            # Bash-String-Op statt echo|cut|xargs (2 externe Prozesse gespart)
+            local _s="${line#*| }"
+            _s="${_s%% |*}"
+            if [ "$_s" = "✔" ]; then
                 echo -e "${COLOR_SEL}$line${COLOR_RESET}"
             else
                 echo -e "${COLOR_ERR}$line${COLOR_RESET}"
@@ -45,7 +38,7 @@ show_history() {
         done <<< "$lastlines"
     fi
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-    read -r -n1 -s
+    consume_keypress
 }
 
 add_to_recent() {
@@ -58,15 +51,7 @@ add_to_recent() {
     echo "$timestamp|$config_path|$task_name|${exec_time}s" >> "$RUN_RECENT_FILE"
     
     # Keep only latest entries
-    if [ -f "$RUN_RECENT_FILE" ]; then
-        local lines
-        lines=$(wc -l < "$RUN_RECENT_FILE" || echo 0)
-        if [ "$lines" -gt "$RUN_RECENT_MAX" ]; then
-            if tail -n "$RUN_RECENT_MAX" "$RUN_RECENT_FILE" > "${RUN_RECENT_FILE}.tmp"; then
-                mv "${RUN_RECENT_FILE}.tmp" "$RUN_RECENT_FILE"
-            fi
-        fi
-    fi
+    trim_file_to_lines "$RUN_RECENT_FILE" "$RUN_RECENT_MAX"
 }
 
 show_recent() {
@@ -76,7 +61,7 @@ show_recent() {
     if [ ! -f "$RUN_RECENT_FILE" ] || [ ! -s "$RUN_RECENT_FILE" ]; then
         echo -e "${COLOR_DIM}No recent tasks yet.${COLOR_RESET}"
         echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-        read -r -n1 -s
+        consume_keypress
         return
     fi
     
@@ -87,16 +72,16 @@ show_recent() {
     local idx=1
     for line in "${lines[@]}"; do
         IFS='|' read -r _ path name rest <<< "$line"
-        local short_path
-        short_path=$(basename "${path:-}" 2>/dev/null)
+        # ${##*/} statt basename-Subshell
+        local short_path="${path##*/}"
         [ "$idx" -le 9 ] && printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$name" "$short_path" || printf "  ${COLOR_DIM}%s (%s)${COLOR_RESET}\n" "$name" "$short_path"
-        ((idx++))
+        idx=$((idx + 1))
     done
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
     
     while true; do
-        read -rsn1 key
+        key=$(read_key) || break
         if [[ "$key" =~ [1-9] ]]; then
             local sel=$((key - 1))
             local entry="${lines[$sel]}"
@@ -148,26 +133,25 @@ show_logs() {
     else
         local idx=1
         for log_file in "${log_files[@]}"; do
-            local filename
-            filename=$(basename "$log_file")
-            echo "$idx) ${filename}"
+            # ${##*/} statt basename-Subshell
+            echo "$idx) ${log_file##*/}"
             idx=$((idx + 1))
         done
         echo ""
         echo "[1-9] View [q]uit"
         
         while true; do
-            read -rsn1 key
+            key=$(read_key) || break
             if [[ "$key" =~ [1-9] ]]; then
                 local sel=$((key - 1))
                 if [ "$sel" -lt "${#log_files[@]}" ]; then
                     clear
-                    echo -e "${COLOR_HEAD}Log: $(basename "${log_files[$sel]}")${COLOR_RESET}"
+                    echo -e "${COLOR_HEAD}Log: ${log_files[$sel]##*/}${COLOR_RESET}"
                     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
                     cat "${log_files[$sel]}"
                     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
                     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-                    read -n1 -rs
+                    consume_keypress
                     return
                 fi
             elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]] || [[ "$key" == $'\x1b' ]]; then
@@ -177,5 +161,5 @@ show_logs() {
     fi
     
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-    read -n1 -rs
+    consume_keypress
 }

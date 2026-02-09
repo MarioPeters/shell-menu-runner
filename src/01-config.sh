@@ -51,7 +51,7 @@ SETTINGS_COLS_MAX=""
 parse_config_vars() {
     set +e +o pipefail  # Disable errexit and pipefail for grep operations
     [ ! -f "$config_path" ] && return
-    TASK_THEME=$(grep "^# THEME:" "$config_path" | head -n 1 | cut -d: -f2 | xargs 2>/dev/null)
+    TASK_THEME=$(awk -F':' '/^# THEME:/ {val=$2; gsub(/^[ \t]+|[ \t]+$/, "", val); print val; exit}' "$config_path" 2>/dev/null)
     task_timeout=$(extract_field_from_grep "^TIMEOUT=" "=" 2)
     task_timeout="${task_timeout:-$RUN_TASK_TIMEOUT}"
     load_task_vars
@@ -64,7 +64,10 @@ parse_config_vars() {
 
 get_local_settings_path() {
     if [ -n "$config_path" ]; then
-        echo "$(dirname "$config_path")/$LOCAL_SETTINGS"
+        local _dir="${config_path%/*}"
+        # If no slash, config_path is a bare filename → same dir as PWD
+        [ "$_dir" = "$config_path" ] && _dir="."
+        echo "$_dir/$LOCAL_SETTINGS"
     else
         echo "$PWD/$LOCAL_SETTINGS"
     fi
@@ -102,6 +105,8 @@ resolve_settings() {
     fi
     [ -n "$SETTINGS_COLS_MIN" ] && COLS_MIN="$SETTINGS_COLS_MIN"
     [ -n "$SETTINGS_COLS_MAX" ] && COLS_MAX="$SETTINGS_COLS_MAX"
+
+    return 0
 }
 
 load_settings() {
@@ -130,21 +135,30 @@ EOF
 
 detect_config_files() {
     local config_dir
-    [ "$active_mode" = "local" ] && config_dir="$(dirname "$config_path")" || config_dir="$HOME"
-    local base_name
-    base_name="$(basename "$config_path")"
+    # Bash string-ops instead of $(dirname)/$(basename) subshells.
+    # The &&...|| idiom was a bug: if the && branch succeeded but the assignment
+    # somehow failed, the || branch would also run. Use if/else instead.
+    if [ "$active_mode" = "local" ]; then
+        config_dir="${config_path%/*}"
+        # If no slash found, config_path is a bare filename → use current dir
+        [ "$config_dir" = "$config_path" ] && config_dir="."
+    else
+        config_dir="$HOME"
+    fi
+    local base_name="${config_path##*/}"
     
     task_config_files=()
     if [ "$base_name" = ".tasks" ]; then
-        [ -f "$config_dir/.tasks" ] && task_config_files+=("$config_dir/.tasks")
-        [ -f "$config_dir/.tasks.local" ] && task_config_files+=("$config_dir/.tasks.local")
-        [ -f "$config_dir/.tasks.dev" ] && task_config_files+=("$config_dir/.tasks.dev")
+        [ -f "$config_dir/.tasks" ] && task_config_files+=("$config_dir/.tasks") || true
+        [ -f "$config_dir/.tasks.local" ] && task_config_files+=("$config_dir/.tasks.local") || true
+        [ -f "$config_dir/.tasks.dev" ] && task_config_files+=("$config_dir/.tasks.dev") || true
     else
-        [ -f "$config_dir/$base_name" ] && task_config_files+=("$config_dir/$base_name")
-        [ -f "$config_dir/${base_name}.local" ] && task_config_files+=("$config_dir/${base_name}.local")
-        [ -f "$config_dir/${base_name}.dev" ] && task_config_files+=("$config_dir/${base_name}.dev")
+        [ -f "$config_dir/$base_name" ] && task_config_files+=("$config_dir/$base_name") || true
+        [ -f "$config_dir/${base_name}.local" ] && task_config_files+=("$config_dir/${base_name}.local") || true
+        [ -f "$config_dir/${base_name}.dev" ] && task_config_files+=("$config_dir/${base_name}.dev") || true
     fi
-    echo "DEBUG: detect_config_files completed, count=${#task_config_files[@]}" >&2
+
+    return 0
 }
 
 merge_configs() {

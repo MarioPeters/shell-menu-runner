@@ -15,11 +15,13 @@ edit_config_menu() {
         echo "3) View file"
         echo "0) Back"
         echo ""
-        read -rsn1 choice
+        choice=$(read_key) || break
         
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$file"
+                # Restore clean terminal state after editor exit
+                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                 ;;
             "2")
                 clear
@@ -56,7 +58,7 @@ edit_config_menu() {
                 echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
                 echo ""
                 echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-                read -n1 -rs
+                consume_keypress
                 ;;
             "0"|$'\x1b')
                 break
@@ -72,7 +74,7 @@ show_alias_editor() {
     if [ ! -f "$ALIAS_FILE" ] || [ ! -s "$ALIAS_FILE" ]; then
         echo -e "${COLOR_DIM}No aliases defined yet.${COLOR_RESET}"
         echo -e "${COLOR_INFO}Create alias file? [y/N]${COLOR_RESET}"
-        read -n1 -r
+        REPLY=$(read_key) || REPLY=""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             cat > "$ALIAS_FILE" << 'EOF'
 # Task Aliases
@@ -82,19 +84,24 @@ show_alias_editor() {
 # test=npm test
 EOF
             ${EDITOR:-nano} "$ALIAS_FILE"
+            # Restore clean terminal state after editor exit
+            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
-        grep -v "^#" "$ALIAS_FILE" | grep -v "^$"
+        # Einzelner grep statt zwei Pipes — spart einen Fork
+        grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
         echo ""
         echo "1) Edit aliases"
         echo "2) Add new alias"
         echo "0) Back"
-        read -rsn1 choice
+        choice=$(read_key) || return
         
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$ALIAS_FILE"
+                # Restore clean terminal state after editor exit
+                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                 ;;
             "2")
                 echo -e "\n${COLOR_INFO}Alias name:${COLOR_RESET}"
@@ -109,7 +116,7 @@ EOF
     fi
     
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
-    read -n1 -rs
+    consume_keypress
 }
 
 load_aliases() {
@@ -122,8 +129,9 @@ load_aliases() {
 resolve_alias() {
     local input="$1"
     if [ -f "$ALIAS_FILE" ]; then
+        # awk for exact match – safe with special chars, no grep regex risks, no cut fork
         local resolved
-        resolved=$(grep "^${input}=" "$ALIAS_FILE" 2>/dev/null | cut -d'=' -f2)
+        resolved=$(awk -F'=' -v a="$input" '$1 == a { print $2; exit }' "$ALIAS_FILE" 2>/dev/null || true)
         if [ -n "$resolved" ]; then
             echo "$resolved"
             return 0
@@ -149,7 +157,7 @@ settings_menu() {
         echo "5) Save Locally"
         echo "0) Back"
         echo ""
-        read -rsn1 choice
+        choice=$(read_key) || break
         
         case "$choice" in
             "1")
@@ -158,7 +166,7 @@ settings_menu() {
                 echo "2) MONO"
                 echo "3) DARK"
                 echo "4) LIGHT"
-                read -rsn1 theme_choice
+                theme_choice=$(read_key) || continue
                 case "$theme_choice" in
                     "1") UI_THEME="CYBER";;
                     "2") UI_THEME="MONO";;
@@ -171,7 +179,7 @@ settings_menu() {
                 echo -e "\n${COLOR_INFO}Select Language:${COLOR_RESET}"
                 echo "1) EN (English)"
                 echo "2) DE (Deutsch)"
-                read -rsn1 lang_choice
+                lang_choice=$(read_key) || continue
                 case "$lang_choice" in
                     "1") UI_LANG="EN";;
                     "2") UI_LANG="DE";;
@@ -179,7 +187,7 @@ settings_menu() {
                 ;;
             "3")
                 echo -e "\n${COLOR_INFO}Column Layout (1-4):${COLOR_RESET}"
-                read -n1 col_val
+                col_val=$(read_key) || continue
                 if [[ "$col_val" =~ [1-4] ]]; then
                     COLS_MIN="$col_val"
                     COLS_MAX="$col_val"

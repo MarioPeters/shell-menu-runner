@@ -11,7 +11,9 @@ find_local_config() {
             set -e
             return 0
         fi
-        d=$(dirname "$d")
+        # Bash-String-Op statt dirname-Subshell
+        d="${d%/*}"
+        [ -z "$d" ] && d="/"
     done
     set -e
     return 1
@@ -27,7 +29,8 @@ find_named_config() {
             set -e
             return 0
         fi
-        d=$(dirname "$d")
+        d="${d%/*}"
+        [ -z "$d" ] && d="/"
     done
     set -e
     return 1
@@ -40,17 +43,18 @@ list_available_profiles() {
         for f in "$d"/.tasks.*; do
             [ -f "$f" ] || continue
             local base
-            base=$(basename "$f")
+            base="${f##*/}"
             base="${base#.tasks.}"
             names+=("$base")
         done
-        d=$(dirname "$d")
+        d="${d%/*}"
+        [ -z "$d" ] && d="/"
     done
     local f
     for f in "$HOME"/.tasks.*; do
         [ -f "$f" ] || continue
         local base
-        base=$(basename "$f")
+        base="${f##*/}"
         names+=("${base#.tasks.}")
     done
     if [ ${#names[@]} -gt 0 ]; then
@@ -244,7 +248,7 @@ select_profile_menu() {
         fi
         echo "[/] filter  0) Cancel"
         echo ""
-        read -rsn1 choice
+        choice=$(read_key) || return 1
         
         case "$choice" in
             [1-9])
@@ -264,8 +268,9 @@ select_profile_menu() {
                 fi
                 ;;
             0) return 1 ;;
-            p) [ "$page" -gt 0 ] && ((page--)) ;;
-            n) [ "$end" -lt "$display_num" ] && ((page++)) ;;
+            q|Q) return 1 ;;
+            p) [ "$page" -gt 0 ] && page=$((page - 1)) ;;
+            n) [ "$end" -lt "$display_num" ] && page=$((page + 1)) ;;
             /) filter_active=1; filter_pattern=""; 
                while true; do
                    clear
@@ -273,7 +278,7 @@ select_profile_menu() {
                    echo -e "${COLOR_DIM}Type to filter, Enter to apply, ESC to cancel${COLOR_RESET}"
                    echo ""
                    echo -n "Filter: ${filter_pattern}_"
-                   read -rsn1 k
+                   k=$(read_key) || { filter_active=0; filter_pattern=""; break; }
                    case "$k" in
                        $'\x1b') filter_active=0; filter_pattern=""; break ;;
                        $'\x7f'|$'\b') filter_pattern="${filter_pattern%?}" ;;

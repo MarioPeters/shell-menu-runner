@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Ensure we are running in Bash, not Zsh (if sourced or run with 'zsh script.sh')
+if [ -n "${ZSH_VERSION:-}" ]; then
+    if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+        echo "Error: This script is not meant to be sourced directly in Zsh."
+        return 1
+    else
+        # Re-execute with bash if run as 'zsh script.sh'
+        exec bash "$0" "$@"
+    fi
+fi
+
 # ==============================================================================
 #  SHELL MENU RUNNER v1.7.0 (Task Tags & Shell Completion)
 #  GitHub: https://github.com/MarioPeters/shell-menu-runner
@@ -19,15 +30,25 @@ readonly RUN_RECENT_FILE="$HOME/.run_recent"
 readonly RUN_RECENT_MAX=50
 readonly RUN_LOG_DIR="$HOME/.run_logs"
 readonly RUN_VARS_FILE="$HOME/.run_vars"
-readonly C_BOLD=$'\e[1m'
+
 
 # --- PERFORMANCE FLAGS (can be set via environment) ---
 RUN_PARALLEL_DEPS="${RUN_PARALLEL_DEPS:-0}"      # Enable parallel dependency execution
 RUN_CACHE_PROFILES="${RUN_CACHE_PROFILES:-1}"   # Cache profile listings (60s TTL)
-RUN_FAST_GREP="${RUN_FAST_GREP:-1}"             # Use optimized grep for large configs
+# Optimierung für macOS/BSD Grep (Locale-Reset für Geschwindigkeit bei Sortierung/Regex)
+# Aber UTF-8 Zeichen müssen erhalten bleiben, daher nur Collate auf C setzen.
+export LC_COLLATE=C
+
+# --- PLATFORM DETECTION ---
+OS_NAME="$(uname -s 2>/dev/null || echo "Unknown")"
+readonly OS_NAME
+ARCH_NAME="$(uname -m 2>/dev/null || echo "Unknown")"
+readonly ARCH_NAME
+IS_MACOS_ARM=0
+if [[ "$OS_NAME" == "Darwin" && "$ARCH_NAME" == "arm64" ]]; then
+    IS_MACOS_ARM=1
+fi
+export IS_MACOS_ARM
 
 set -euo pipefail
 
-# Helpful debug trap to show failing command, file and line when an error occurs.
-# This is temporary for debugging; can be removed later.
-trap 'echo "ERROR: command failed: \"$BASH_COMMAND\" at ${BASH_SOURCE[0]}:${LINENO}" >&2' ERR

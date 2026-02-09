@@ -148,6 +148,27 @@ run --validate
 
 ---
 
+### Problem: "docker compose logs" says "no configuration file provided"
+
+**Cause:** `docker compose` looks for `compose.yml` or `docker-compose.yml` in the current directory.
+
+**Fixes:**
+
+1. **Run from the compose directory**
+
+   ```bash
+   cd /path/to/project
+   run docker
+   ```
+
+2. **Use an explicit file path**
+
+   ```bash
+   docker compose -f /path/to/docker-compose.yml logs -f --tail=200
+   ```
+
+---
+
 ### Problem: Profile not found
 
 **Diagnosis:**

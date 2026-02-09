@@ -6,6 +6,7 @@ check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
         is_interactive=1
+        init_terminal_capabilities
     else
         is_interactive=0
     fi
@@ -18,6 +19,110 @@ check_ssh_session() {
     else
         is_ssh_session=0
     fi
+}
+
+# Optimized terminal capability caching
+_TPUT_INITIALIZED=0
+init_terminal_capabilities() {
+    # Only run once — guard auf dediziertes Flag statt TPUT_COLS (könnte leer sein wenn tput cols versagt)
+    [ "${_TPUT_INITIALIZED:-0}" -eq 1 ] && return
+    _TPUT_INITIALIZED=1
+
+    if command -v tput >/dev/null 2>&1; then
+        TPUT_CUP="$(tput cup 0 0 2>/dev/null)"
+        TPUT_CIVIS="$(tput civis 2>/dev/null)"
+        TPUT_CNORM="$(tput cnorm 2>/dev/null)"
+        TPUT_ED="$(tput ed 2>/dev/null)"
+        TPUT_COLS="$(tput cols 2>/dev/null)"
+        HAS_TPUT=1
+    else
+        HAS_TPUT=0
+        TPUT_COLS=80
+    fi
+    # Update cols on resize
+    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80)' WINCH
+}
+
+consume_keypress() {
+    # Suppress echo so arrow keys / escape sequences are not printed to the
+    # terminal while waiting for the keypress (e.g. after stty sane in execute_task).
+    stty -echo 2>/dev/null
+    read_key >/dev/null
+    # Drain any remaining bytes from multi-byte escape sequences (e.g. arrow keys
+    # send \x1b[A; read_key already consumed the full sequence, but defensive
+    # drain prevents leftover bytes leaking into the main loop's key handler).
+    drain_stdin
+    stty echo 2>/dev/null
+}
+
+# Enable raw interactive input mode for the main loop.
+# Flags: no echo, no canonical buffering, pass signals, block until 1 char min.
+# NOTE: icrnl is intentionally left ON so Enter (\r→\n) is stripped by $()
+# to "". Spurious "" from a failed read_key_raw is blocked by the _rk_status
+# guard in the main loop (13-ui.sh), not by changing icrnl.
+set_raw_mode() {
+    stty -echo -icanon time 0 min 1 isig 2>/dev/null
+}
+
+drain_stdin() {
+    # Non-blocking drain of any pending stdin bytes (e.g. escape sequence tails
+    # or task output left in the buffer). Explicitly disables icanon so this
+    # works regardless of the current terminal mode (e.g. after stty sane).
+    # Uses bs=128 to empty buffers with fewer fork iterations.
+    # Restores blocking raw mode (min 1) afterwards.
+    stty -icanon min 0 time 0 2>/dev/null
+    local _d
+    while true; do
+        _d=$(dd bs=128 count=1 2>/dev/null)
+        [ -z "$_d" ] && break
+    done
+    stty min 1 time 0 2>/dev/null
+}
+
+read_key() {
+    local key=""
+    # 1. Read first char (blocking)
+    # This relies on the outer loop setting stty to blocking (min 1)
+    if ! read -rsn1 key; then return 1; fi
+
+    # 2. Check for ESC sequence
+    if [ "$key" = $'\x1b' ]; then
+        # Save current stty state and switch to non-blocking with 100ms window.
+        # Use ONE dd call (bs=10) instead of a loop of bs=1 forks: fewer subshells,
+        # no race between fork overhead and byte delivery.
+        local previous_stty
+        previous_stty=$(stty -g)
+        stty -icanon min 0 time 1 2>/dev/null
+        local seq
+        seq=$(dd bs=10 count=1 2>/dev/null)
+        stty "$previous_stty" 2>/dev/null
+        key="${key}${seq}"
+    fi
+    printf "%s" "$key"
+}
+
+# Optimized version of read_key that assumes stty is already set to raw mode.
+# This avoids the overhead of calling stty twice per keypress.
+read_key_raw() {
+    local key=""
+    # 1. Read first char (blocking 1 char, min 1 time 0)
+    if ! read -rsn1 key; then return 1; fi
+
+    # 2. Check for ESC sequence
+    if [ "$key" = $'\x1b' ]; then
+        # Read the remainder of the escape sequence with ONE dd call (up to 10 bytes).
+        # Using time 1 (100ms window) with min 0: dd returns immediately once bytes
+        # are available (arrow keys deliver [A within ~1ms on local terminals), and
+        # waits at most 100ms if nothing arrives (pure ESC press).
+        # One fork instead of 5 serial forks avoids the race condition where
+        # fork overhead (~5-20ms) caused [A to be missed at time 0.
+        stty min 0 time 1 2>/dev/null
+        local seq
+        seq=$(dd bs=10 count=1 2>/dev/null)
+        stty min 1 time 0 2>/dev/null
+        key="${key}${seq}"
+    fi
+    printf "%s" "$key"
 }
 
 print_ssh_hint() {

@@ -2,15 +2,15 @@
 #  UI RENDERING & KEYBOARD INPUT HANDLING
 # ==============================================================================
 
+# Terminal capabilities are initialized in 03-terminal.sh via init_terminal_capabilities
+
+# Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
     local cols=1
     local rows="$total"
-    
-    # Dynamic column layout based on item count and terminal width
-    local term_width
-    term_width=$(tput cols 2>/dev/null || echo 80)
-    
+    local term_width="${TPUT_COLS:-80}"
+
     if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
         cols=3
         rows=$(( (total + cols - 1) / cols ))
@@ -18,11 +18,12 @@ calculate_layout() {
         cols=2
         rows=$(( (total + cols - 1) / cols ))
     fi
-    
+
     [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
     [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
-    
-    echo "$rows|$cols"
+
+    _layout_rows=$rows
+    _layout_cols=$cols
 }
 
 show_help_panel() {
@@ -61,7 +62,7 @@ ${COLOR_SEL}Profiles:${COLOR_RESET}
 
 ${COLOR_DIM}Press any key to continue...${COLOR_RESET}
 EOF
-    read -r -n1 -s
+    consume_keypress
 }
 
 get_menu_options() {
@@ -69,7 +70,7 @@ get_menu_options() {
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -n "$cached_menu_options" ]; then
         if [ -f "$config_path" ]; then
             local current_mtime
-            current_mtime=$(stat -f %m "$config_path" 2>/dev/null || stat -c %Y "$config_path" 2>/dev/null || echo 0)
+            current_mtime=$(get_file_mtime "$config_path")
             if [ "$current_mtime" -eq "$last_config_mtime" ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ]; then
                 echo "$cached_menu_options"
                 return 0
@@ -87,21 +88,16 @@ get_menu_options() {
     fi
     
     if [ -n "$filter_query" ]; then
-        search_pattern="$(echo "$filter_query" | tr '[:upper:]' '[:lower:]')"
+        # tr mit here-string: kein echo-Subshell-Pipe
+        search_pattern=$(tr '[:upper:]' '[:lower:]' <<< "$filter_query")
     fi
     
     if [ -n "$tag_filter" ]; then
         tag_pattern="$tag_filter"
     fi
     
-    local all_output=""
-    if [ "${#task_config_files[@]}" -gt 0 ]; then
-        all_output=$(merge_configs)
-    elif [ -f "$config_path" ]; then
-        all_output=$(cat "$config_path")
-    fi
-
     local result=""
+    # Process substitution: Config-Inhalt direkt streamen — kein all_output-String-Kopie im Speicher
     while IFS= read -r line || [ -n "$line" ]; do
         [ -z "$line" ] && continue
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -126,7 +122,8 @@ get_menu_options() {
         # Search filtering
         if [ -n "$search_pattern" ]; then
             local search_text
-            search_text="$(echo "$name $desc" | tr '[:upper:]' '[:lower:]')"
+            # here-string statt echo|tr: spart einen Subshell-Pipe-Prozess pro Zeile
+            search_text=$(tr '[:upper:]' '[:lower:]' <<< "$name $desc")
             [[ ! "$search_text" =~ $search_pattern ]] && continue
         fi
 
@@ -136,13 +133,19 @@ get_menu_options() {
         fi
 
         # Append to result buffer (do not echo here to avoid recursion)
-        result+="$level|$name|$cmd|$desc\n"
-    done <<< "$all_output"
+        result+="${level}|${name}|${cmd}|${desc}"$'\n'
+    done < <(
+        if [ "${#task_config_files[@]}" -gt 0 ]; then
+            cat "${task_config_files[@]}" 2>/dev/null || true
+        elif [ -f "$config_path" ]; then
+            cat "$config_path"
+        fi
+    )
 
     # Cache result (store the constructed string, avoid calling get_menu_options again)
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ] && [ -f "$config_path" ]; then
         cached_menu_options="$result"
-        last_config_mtime=$(stat -f %m "$config_path" 2>/dev/null || stat -c %Y "$config_path" 2>/dev/null || echo 0)
+        last_config_mtime=$(get_file_mtime "$config_path")
     fi
 
     # Emit result
@@ -150,15 +153,25 @@ get_menu_options() {
 }
 
 draw_menu() {
-    clear
+    # Optimization: Use tput to move cursor instead of clearing screen (reduces flicker)
+    # macOS/BSD tput generally supports 'cup' and 'ed' (clear to end of screen)
+    if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_CUP" ]; then
+        echo -ne "$TPUT_CUP"
+    else
+        clear
+    fi
     hide_cursor
     
     # Header
     local mode_indicator="[${active_mode}]"
     local profile_name=""
     if [ "$active_mode" = "global" ] && [ -f "$config_path" ]; then
-        profile_name=$(basename "$config_path" .tasks)
-        [ "$profile_name" != ".tasks" ] && mode_indicator="[${profile_name}]"
+        # Bash string-ops: no $(basename) subshell in hot render path.
+        # .tasks.docker → strip dir → .tasks.docker → strip .tasks prefix → .docker → strip dot → docker
+        local _bn="${config_path##*/}"
+        profile_name="${_bn##.tasks}"   # strip .tasks prefix (→ .docker or "")
+        profile_name="${profile_name#.}" # strip leading dot  (→ docker  or "")
+        [ -n "$profile_name" ] && mode_indicator="[${profile_name}]"
     fi
     
     echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
@@ -188,9 +201,9 @@ draw_menu() {
         return
     fi
     
-    local rows cols
-    IFS='|' read -r rows cols <<< "$(calculate_layout "$total")"
-    
+    calculate_layout "$total"
+    local rows=$_layout_rows cols=$_layout_cols
+
     for ((r=0; r<rows; r++)); do
         for ((c=0; c<cols; c++)); do
             local idx=$((r + c * rows))
@@ -223,50 +236,86 @@ draw_menu() {
     
     echo ""
     echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi-Select | [?] Help${COLOR_RESET}"
+    
+    # Optimization: Clear remaining lines to ensure old menu items are removed
+    if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ]; then
+        echo -ne "$TPUT_ED"
+    fi
 }
 
 # ==============================================================================
 #  MAIN INTERACTIVE LOOP WITH KEYBOARD HANDLING
 # ==============================================================================
 
-main_interactive_loop() {
-    # Initialize
+# Lädt menu_options neu und aktualisiert calculate_layout.
+_reload_menu() {
     IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
+    calculate_layout "${#menu_options[@]}"
+}
+
+# Lädt Konfiguration + Menü neu — ersetzt das 5-Funktionen-Pattern
+# parse_config_vars+load_settings+load_state+detect_config_files+load_aliases.
+_reinit_menu() {
+    parse_config_vars
+    load_settings
+    load_state
+    detect_config_files
+    load_aliases
+    _reload_menu
+}
+
+# Führt "$@" mit wiederhergestellten Terminal-Einstellungen aus und schaltet
+# danach wieder in den Raw-Mode. Ersetzt das 15× vorhandene
+# restore_term; <call>; [ is_interactive ] && stty ... -Pattern.
+run_with_term_paused() {
+    restore_term
+    "$@"
+    if [ "${is_interactive:-0}" -eq 1 ]; then
+        set_raw_mode
+        drain_stdin  # flush any escape sequence tails from the secondary screen
+    fi
+}
+
+main_interactive_loop() {
+    # Disable strict error checking for the interactive loop to prevent
+    # accidental exits during navigation (arithmetic 0 results, etc.)
+    set +e
+
+    # Initialize
+    _reload_menu
     local num=${#menu_options[@]}
-    IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+    local rows=$_layout_rows cols=$_layout_cols
     local redraw_needed=1
-    local prev_selected_index=$selected_index
     
+    # OPTIMIZATION: Set raw mode once to avoid stty overhead
+    local old_stty=""
+    restore_term() {
+        [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
+    }
+    
+    if [ "$is_interactive" -eq 1 ]; then
+        old_stty=$(stty -g 2>/dev/null)
+        set_raw_mode
+        trap 'restore_term; cleanup_wrapper; exit 130' INT TERM
+    fi
+
     while true; do
         # Only redraw if needed (performance optimization)
         if [ "$redraw_needed" -eq 1 ]; then
             draw_menu
             redraw_needed=0
-            prev_selected_index=$selected_index
         fi
         
         # ══════════════════════════════════════════════════════════════
-        #  KEYBOARD INPUT HANDLING (BUG-FIX: stty raw + dd)
+        #  KEYBOARD INPUT HANDLING
         # ══════════════════════════════════════════════════════════════
-        local key=""
+        local key="" _rk_status=0
         if [ "$is_interactive" -eq 1 ]; then
-            # Save terminal state and switch to raw mode
-            local old_stty
-            old_stty=$(stty -g 2>/dev/null)
-            stty raw -echo 2>/dev/null
-            
-            # Read first byte using dd (more reliable than read with timeout)
-            key=$(dd bs=1 count=1 2>/dev/null)
-            
-            # ESC detection: Check for arrow key sequence
-            if [ "$key" = $'\x1b' ]; then
-                local rest
-                rest=$(dd bs=1 count=2 2>/dev/null)
-                key="${key}${rest}"
-            fi
-            
-            # Restore terminal state
-            stty "$old_stty" 2>/dev/null
+            # Capture exit status separately: command substitution strips trailing \n,
+            # so a real Enter (\n) correctly becomes "".  But if read_key_raw fails
+            # (e.g. EINTR from a signal), we must NOT treat the empty result as Enter.
+            key=$(read_key_raw); _rk_status=$?
+            [ "$_rk_status" -ne 0 ] && continue
         else
             # Non-interactive: read line (for SSH without TTY)
             read -r key || break
@@ -276,24 +325,22 @@ main_interactive_loop() {
         #  KEY HANDLING
         # ══════════════════════════════════════════════════════════════
         case "$key" in
-            $'\x1b[A') ((selected_index--)); redraw_needed=1;; # Arrow Up
-            $'\x1b[B') ((selected_index++)); redraw_needed=1;; # Arrow Down
-            $'\x1b[C') [ "$cols" -gt 1 ] && selected_index=$((selected_index + rows)); redraw_needed=1;; # Arrow Right
-            $'\x1b[D') [ "$cols" -gt 1 ] && selected_index=$((selected_index - rows)); redraw_needed=1;; # Arrow Left
+            $'\x1b[A'|$'\x1bOA') selected_index=$((selected_index - 1)); redraw_needed=1;; # Arrow Up
+            $'\x1b[B'|$'\x1bOB') selected_index=$((selected_index + 1)); redraw_needed=1;; # Arrow Down
+            $'\x1b[C'|$'\x1bOC') [ "$cols" -gt 1 ] && selected_index=$((selected_index + rows)); redraw_needed=1;; # Arrow Right
+            $'\x1b[D'|$'\x1bOD') [ "$cols" -gt 1 ] && selected_index=$((selected_index - rows)); redraw_needed=1;; # Arrow Left
             $'\x1b') # Pure ESC key
                 if [ "$current_level" -gt 0 ]; then
-                    ((current_level--))
+                    current_level=$((current_level - 1))
                     history_name_stack=("${history_name_stack[@]:0:${#history_name_stack[@]}-1}")
                     selected_index=0
-                    IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                    num=${#menu_options[@]}
-                    IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                    _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                     redraw_needed=1
                 else
-                    clear; exit 0
+                    restore_term; clear; exit 0
                 fi;;
-            "k") ((selected_index--)); redraw_needed=1;; # Vim up
-            "j") ((selected_index++)); redraw_needed=1;; # Vim down
+            "k") selected_index=$((selected_index - 1)); redraw_needed=1;; # Vim up
+            "j") selected_index=$((selected_index + 1)); redraw_needed=1;; # Vim down
             "h") [ "$cols" -gt 1 ] && selected_index=$((selected_index - rows)); redraw_needed=1;; # Vim left
             "l") [ "$cols" -gt 1 ] && selected_index=$((selected_index + rows)); redraw_needed=1;; # Vim right
             " ") # Space: Multi-select toggle
@@ -307,15 +354,20 @@ main_interactive_loop() {
                 local hotkey_idx=$((key - 1))
                 if [ "$hotkey_idx" -lt "$num" ]; then
                     selected_index="$hotkey_idx"
-                    IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
-                    [ "$cm" != "EXIT" ] && [ "$cm" != "SUB" ] && [ "$cm" != "BACK" ] && execute_task "$cm" "$n" "$d"
+                    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                    if [ "$cmd" != "EXIT" ] && [ "$cmd" != "SUB" ] && [ "$cmd" != "BACK" ]; then
+                        run_with_term_paused execute_task "$cmd" "$name" "$desc"
+                    fi
                     redraw_needed=1
                 fi;;
             "/") # Search
+                restore_term
                 interactive_search && selected_index=0
-                IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                num=${#menu_options[@]}
-                IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                if [ "${is_interactive:-0}" -eq 1 ]; then
+                    set_raw_mode
+                    drain_stdin
+                fi
+                _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                 redraw_needed=1;;
             "g") # Toggle local/global
                 if [ "$active_mode" == "local" ]; then
@@ -327,47 +379,45 @@ main_interactive_loop() {
                 fi
                 selected_index=0
                 current_level=0
-                parse_config_vars
-                load_settings
-                load_state
-                detect_config_files
-                load_aliases
-                IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                num=${#menu_options[@]}
-                IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                _reinit_menu
+                num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                 redraw_needed=1;;
             "p"|"P") # Profile selection
+                restore_term
                 if select_profile_menu; then
                     selected_index=0
                     current_level=0
                     history_name_stack=("Main")
-                    parse_config_vars
-                    load_settings
-                    load_state
-                    detect_config_files
-                    load_aliases
-                    IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                    num=${#menu_options[@]}
-                    IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
-                    redraw_needed=1
-                fi;;
-            "s") settings_menu; redraw_needed=1;;
-            "!") show_history; redraw_needed=1;;
-            "a"|"A") show_alias_editor; redraw_needed=1;;
-            "?") show_help_panel; redraw_needed=1;;
-            $'\r'|$'\n'|"") # ENTER key (BUG-FIX: Accept both \r and \n)
+                    _reinit_menu
+                    num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
+                fi
+                if [ "${is_interactive:-0}" -eq 1 ]; then
+                    set_raw_mode
+                    drain_stdin
+                fi
+                redraw_needed=1;;
+            "s") run_with_term_paused settings_menu; redraw_needed=1;;
+            "!") run_with_term_paused show_history; redraw_needed=1;;
+            "a"|"A") run_with_term_paused show_alias_editor; redraw_needed=1;;
+            "?") run_with_term_paused show_help_panel; redraw_needed=1;;
+            $'\r'|$'\n'|"") # ENTER: \r = raw CR, \n = LF, "" = \n stripped by $()
                 set +u
                 [ ${#menu_options[@]} -eq 0 ] && { set -u; continue; }
                 
                 # Multi-select execution
                 if [ ${#multi_select_map[@]} -gt 0 ]; then
                     set -u
+                    restore_term
                     IFS=$'\n' read -r -d '' -a multi_keys < <(printf "%s\n" "${!multi_select_map[@]}" | sort -n && printf '\0') || true
                     for mi in "${multi_keys[@]}"; do
-                        IFS='|' read -r n cm d <<< "${menu_options[$mi]}"
-                        [ "$cm" == "EXIT" ] && continue
-                        execute_task "$cm" "$n" "$d"
+                        IFS='|' read -r level name cmd desc <<< "${menu_options[$mi]}"
+                        [ "$cmd" == "EXIT" ] && continue
+                        execute_task "$cmd" "$name" "$desc"
                     done
+                    if [ "$is_interactive" -eq 1 ]; then
+                        set_raw_mode
+                        drain_stdin
+                    fi
                     echo -e "${COLOR_INFO}$(msg executed_marked):${COLOR_RESET} ${#multi_keys[@]} $(msg marked_label)"
                     multi_select_map=()
                     redraw_needed=1
@@ -376,48 +426,43 @@ main_interactive_loop() {
                 set -u
                 
                 # Single execution
-                IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
-                if [ "$cm" == "EXIT" ]; then
-                    clear; exit 0
-                elif [ "$cm" == "SUB" ]; then
-                    ((current_level++))
-                    history_name_stack+=("$n")
+                IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                if [ "$cmd" == "EXIT" ]; then
+                    restore_term; clear; exit 0
+                elif [ "$cmd" == "SUB" ]; then
+                    current_level=$((current_level + 1))
+                    history_name_stack+=("$name")
                     selected_index=0
-                    IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                    num=${#menu_options[@]}
-                    IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                    _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                     redraw_needed=1
-                elif [ "$cm" == "BACK" ] && [ "$current_level" -gt 0 ]; then
-                    ((current_level--))
+                elif [ "$cmd" == "BACK" ] && [ "$current_level" -gt 0 ]; then
+                    current_level=$((current_level - 1))
                     history_name_stack=("${history_name_stack[@]:0:${#history_name_stack[@]}-1}")
                     selected_index=0
-                    IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                    num=${#menu_options[@]}
-                    IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                    _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                     redraw_needed=1
                 else
-                    execute_task "$cm" "$n" "$d"
+                    run_with_term_paused execute_task "$cmd" "$name" "$desc"
                     redraw_needed=1
                 fi;;
             "e"|"E") # Edit config
                 [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"
-                edit_config_menu "$config_path"
+                run_with_term_paused edit_config_menu "$config_path"
                 redraw_needed=1;;
-            "f"|"F") file_browser; redraw_needed=1;;
+            "f"|"F") run_with_term_paused file_browser; redraw_needed=1;;
             "#") # Tag filter
-                show_tag_menu
-                IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
-                num=${#menu_options[@]}
-                IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+                run_with_term_paused show_tag_menu
+                _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                 redraw_needed=1;;
             "*") # Toggle favorite
+                # Internal operation, no restore needed
                 if [ "$selected_index" -lt "$num" ]; then
-                    IFS='|' read -r n cm d <<< "${menu_options[$selected_index]}"
-                    toggle_favorite "$n"
+                    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                    toggle_favorite "$name"
                 fi
                 redraw_needed=1;;
-            "r"|"R") show_favorites; redraw_needed=1;;
-            "q"|"Q") clear; exit 0;;
+            "r"|"R") run_with_term_paused show_favorites; redraw_needed=1;;
+            "q"|"Q") restore_term; clear; exit 0;;
         esac
         
         # Wrap around selection index
@@ -432,11 +477,11 @@ main_interactive_loop() {
 # ==============================================================================
 
 context_menu() {
-    IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
+    # menu_options ist global stets aktuell — kein erneuter get_menu_options-Aufruf nötig
     local num=${#menu_options[@]}
     [ "$num" -eq 0 ] && return
     [ "$selected_index" -ge "$num" ] && return
-    IFS='|' read -r name cmd desc <<< "${menu_options[$selected_index]}"
+    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
     if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
         echo -e "${COLOR_WARN}No context actions for this entry.${COLOR_RESET}"
         sleep 1

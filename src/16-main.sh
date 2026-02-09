@@ -11,11 +11,12 @@ self_update() {
     local tmp_file
     tmp_file=$(mktemp /tmp/run_update.XXXXXX) || { echo -e "${COLOR_ERR}$(msg temp_file_fail)${COLOR_RESET}"; return 1; }
     if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
-        if [ -n "$RUN_EXPECTED_SHA256" ]; then
+        # ${RUN_EXPECTED_SHA256:-} guards against 'unbound variable' with set -u
+        if [ -n "${RUN_EXPECTED_SHA256:-}" ]; then
             local dl_hash=""
             dl_hash=$(file_sha256 "$tmp_file") || echo -e "${COLOR_WARN}$(msg hash_skipped)${COLOR_RESET}"
-            if [ -n "$dl_hash" ] && [ "$dl_hash" != "$RUN_EXPECTED_SHA256" ]; then
-                echo -e "${COLOR_ERR}$(msg hash_mismatch) $RUN_EXPECTED_SHA256 != $dl_hash${COLOR_RESET}"
+            if [ -n "$dl_hash" ] && [ "$dl_hash" != "${RUN_EXPECTED_SHA256:-}" ]; then
+                echo -e "${COLOR_ERR}$(msg hash_mismatch) ${RUN_EXPECTED_SHA256:-} != $dl_hash${COLOR_RESET}"
                 rm -f "$tmp_file"
                 return 1
             fi
@@ -116,11 +117,11 @@ EOF
                 cat > "$docker_tasks_file" <<'EOF'
 # Shell Menu Runner Docker Tasks
 # TITLE: DOCKER
-0|🐳 Up|docker-compose up -d|Start containers
-0|🐳 Down|docker-compose down|Stop containers
-0|🐳 Logs|docker-compose logs -f --tail=200|Follow logs
-0|🐳 Restart|docker-compose restart|Restart containers
-0|🐳 Ps|docker-compose ps|Show status
+0|🐳 Up|docker compose up -d|Start containers
+0|🐳 Down|docker compose down|Stop containers
+0|🐳 Logs|docker compose logs -f --tail=200|Follow logs
+0|🐳 Restart|docker compose restart|Restart containers
+0|🐳 Ps|docker compose ps|Show status
 0|❌ Exit|EXIT|Back
 EOF
             fi
@@ -130,7 +131,7 @@ EOF
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ $(msg node_detected)${COLOR_RESET}"
             local scripts
-            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//')
+            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done
@@ -146,8 +147,8 @@ EOF
         # 2. Docker Detection
         if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then
             echo -e "${COLOR_INFO}→ $(msg docker_detected)${COLOR_RESET}"
-            echo "0|🐳 Docker Up|docker-compose up -d|Container starten" >> "$target"
-            echo "0|🐳 Docker Down|docker-compose down|Container stoppen" >> "$target"
+            echo "0|🐳 Docker Up|docker compose up -d|Container starten" >> "$target"
+            echo "0|🐳 Docker Down|docker compose down|Container stoppen" >> "$target"
         fi
 
         # 3. Python Detection
@@ -355,10 +356,13 @@ if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
-        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+        # Bash-String-Op statt echo|tr-Pipe (kein Fork)
+        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         echo -e "${COLOR_DIM}Press [p] to choose a profile or any other key to continue...${COLOR_RESET}"
-        read -rsn1 key
-        sleep 0.1
+        key=$(read_key) || key=""
+        # Drain any remaining bytes (arrow-key sequences etc.) so they don't
+        # leak into the main interactive loop that starts afterwards.
+        drain_stdin
         if [ "$key" = "p" ] || [ "$key" = "P" ]; then
             select_profile_menu || true
         fi
@@ -384,7 +388,7 @@ if [ "${#args[@]}" -gt 0 ]; then
         echo -e "${COLOR_WARN}Profile '$profile' not found. Using default config.${COLOR_RESET}"
         profiles_list=$(list_available_profiles)
         if [ -n "$profiles_list" ]; then
-            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         fi
     fi
 else
@@ -407,12 +411,11 @@ fi
 parse_config_vars
 load_settings
 load_state
+# Ensure selected_index is initialized
+selected_index="${selected_index:-0}"
 detect_config_files
-echo "DEBUG: after detect_config_files" >&2
 load_aliases
-echo "DEBUG: after load_aliases" >&2
 check_interactive
-echo "DEBUG: after check_interactive" >&2
 check_ssh_session
 
 # If not interactive and SSH, show hint (only once)
@@ -428,10 +431,8 @@ fi
 # Load menu options once before loop
 IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
-IFS='|' read -r rows cols <<< "$(calculate_layout "$num")"
+calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
-prev_selected_index=$selected_index
 
 # Main interactive loop is in 13-ui.sh
-echo "DEBUG: before main_interactive_loop" >&2
 main_interactive_loop

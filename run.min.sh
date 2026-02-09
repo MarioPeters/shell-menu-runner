@@ -1,22 +1,12 @@
 #!/bin/bash
-
-# Ensure we are running in Bash, not Zsh (if sourced or run with 'zsh script.sh')
 if [ -n "${ZSH_VERSION:-}" ]; then
     if [ "${BASH_SOURCE[0]}" != "$0" ]; then
         echo "Error: This script is not meant to be sourced directly in Zsh."
         return 1
     else
-        # Re-execute with bash if run as 'zsh script.sh'
         exec bash "$0" "$@"
     fi
 fi
-
-# ==============================================================================
-#  SHELL MENU RUNNER v1.7.0 (Task Tags & Shell Completion)
-#  GitHub: https://github.com/MarioPeters/shell-menu-runner
-#  Lizenz: MIT
-# ==============================================================================
-
 readonly VERSION="1.7.0"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
@@ -30,16 +20,9 @@ readonly RUN_RECENT_FILE="$HOME/.run_recent"
 readonly RUN_RECENT_MAX=50
 readonly RUN_LOG_DIR="$HOME/.run_logs"
 readonly RUN_VARS_FILE="$HOME/.run_vars"
-
-
-# --- PERFORMANCE FLAGS (can be set via environment) ---
 RUN_PARALLEL_DEPS="${RUN_PARALLEL_DEPS:-0}"      # Enable parallel dependency execution
 RUN_CACHE_PROFILES="${RUN_CACHE_PROFILES:-1}"   # Cache profile listings (60s TTL)
-# Optimierung für macOS/BSD Grep (Locale-Reset für Geschwindigkeit bei Sortierung/Regex)
-# Aber UTF-8 Zeichen müssen erhalten bleiben, daher nur Collate auf C setzen.
 export LC_COLLATE=C
-
-# --- PLATFORM DETECTION ---
 OS_NAME="$(uname -s 2>/dev/null || echo "Unknown")"
 readonly OS_NAME
 ARCH_NAME="$(uname -m 2>/dev/null || echo "Unknown")"
@@ -49,20 +32,10 @@ if [[ "$OS_NAME" == "Darwin" && "$ARCH_NAME" == "arm64" ]]; then
     IS_MACOS_ARM=1
 fi
 export IS_MACOS_ARM
-
 set -euo pipefail
-
-
-# ==============================================================================
-#  CONFIGURATION & SETTINGS
-# ==============================================================================
-
-# --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
 COLOR_WARN=$'\e[1;33m'; COLOR_INFO=$'\e[33m';  COLOR_DIM=$'\e[2m'
 COLOR_RESET=$'\e[0m'
-
-# --- GLOBAL STATE ---
 current_level=0
 selected_index=0
 history_name_stack=("Main")
@@ -82,9 +55,7 @@ is_ssh_session=0
 ssh_hint_shown=0
 last_config_mtime=0
 cached_menu_options=""
-DEBUG_MODE=1
-
-# --- SETTINGS STATE ---
+DEBUG_MODE=0
 readonly DEFAULT_LANG="DE"
 readonly DEFAULT_THEME="CYBER"
 readonly DEFAULT_COLS_MIN=1
@@ -98,11 +69,6 @@ SETTINGS_THEME=""
 SETTINGS_LANG=""
 SETTINGS_COLS_MIN=""
 SETTINGS_COLS_MAX=""
-
-# ==============================================================================
-#  CONFIG FILE PARSING
-# ==============================================================================
-
 parse_config_vars() {
     set +e +o pipefail  # Disable errexit and pipefail for grep operations
     [ ! -f "$config_path" ] && return
@@ -112,11 +78,6 @@ parse_config_vars() {
     load_task_vars
     set -e -o pipefail  # Re-enable errexit and pipefail
 }
-
-# ==============================================================================
-#  SETTINGS MANAGEMENT
-# ==============================================================================
-
 get_local_settings_path() {
     if [ -n "$config_path" ]; then
         echo "$(dirname "$config_path")/$LOCAL_SETTINGS"
@@ -124,7 +85,6 @@ get_local_settings_path() {
         echo "$PWD/$LOCAL_SETTINGS"
     fi
 }
-
 parse_settings_file() {
     local file="$1"
     [ ! -f "$file" ] && return 0
@@ -142,13 +102,11 @@ parse_settings_file() {
         esac
     done < "$file"
 }
-
 resolve_settings() {
     UI_LANG="$DEFAULT_LANG"
     UI_THEME="$DEFAULT_THEME"
     COLS_MIN="$DEFAULT_COLS_MIN"
     COLS_MAX="$DEFAULT_COLS_MAX"
-
     [ -n "$SETTINGS_LANG" ] && UI_LANG="$SETTINGS_LANG"
     if [ -n "$SETTINGS_THEME" ]; then
         UI_THEME="$SETTINGS_THEME"
@@ -157,40 +115,30 @@ resolve_settings() {
     fi
     [ -n "$SETTINGS_COLS_MIN" ] && COLS_MIN="$SETTINGS_COLS_MIN"
     [ -n "$SETTINGS_COLS_MAX" ] && COLS_MAX="$SETTINGS_COLS_MAX"
-
     return 0
 }
-
 load_settings() {
     SETTINGS_THEME=""; SETTINGS_LANG=""; SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
     parse_settings_file "$GLOBAL_SETTINGS"
     parse_settings_file "$(get_local_settings_path)"
     resolve_settings
 }
-
 save_settings() {
     local scope="$1"
     local target="$GLOBAL_SETTINGS"
     [ "$scope" = "local" ] && target="$(get_local_settings_path)"
     cat > "$target" <<EOF
-# Shell Menu Runner Settings
 THEME=$UI_THEME
 LANG=$UI_LANG
 COLS_MIN=$COLS_MIN
 COLS_MAX=$COLS_MAX
 EOF
 }
-
-# ==============================================================================
-#  MULTI-FILE CONFIG SUPPORT
-# ==============================================================================
-
 detect_config_files() {
     local config_dir
     [ "$active_mode" = "local" ] && config_dir="$(dirname "$config_path")" || config_dir="$HOME"
     local base_name
     base_name="$(basename "$config_path")"
-    
     task_config_files=()
     if [ "$base_name" = ".tasks" ]; then
         [ -f "$config_dir/.tasks" ] && task_config_files+=("$config_dir/.tasks") || true
@@ -201,27 +149,26 @@ detect_config_files() {
         [ -f "$config_dir/${base_name}.local" ] && task_config_files+=("$config_dir/${base_name}.local") || true
         [ -f "$config_dir/${base_name}.dev" ] && task_config_files+=("$config_dir/${base_name}.dev") || true
     fi
-
     return 0
 }
-
 merge_configs() {
-    # Merge all config files into one stream (faster than loop+cat)
     cat "${task_config_files[@]}" 2>/dev/null || true
 }
-
 file_sha256() {
     local f="$1"
     if command -v sha256sum &>/dev/null; then sha256sum "$f" | awk '{print $1}'
     elif command -v shasum &>/dev/null; then shasum -a 256 "$f" | awk '{print $1}'
     else return 1; fi
 }
-
-# ==============================================================================
-#  POLYFILLS & UTILS
-# ==============================================================================
-
-get_realpath() { command -v realpath &>/dev/null && realpath "$1" || echo "$PWD/${1#./}"; }
+get_realpath() {
+    if command -v realpath &>/dev/null; then
+        realpath "$1"
+    elif [[ "$1" = /* ]]; then
+        echo "$1"
+    else
+        echo "$PWD/${1#./}"
+    fi
+}
 cleanup_terminal() { 
     if [ -n "${TPUT_CNORM:-}" ]; then
         echo -ne "$TPUT_CNORM"
@@ -240,18 +187,12 @@ hide_cursor() {
         tput civis 2>/dev/null || true
     fi
 }
-
-# Color output helpers
 info() { echo -e "${COLOR_INFO}$*${COLOR_RESET}"; }
 warn() { echo -e "${COLOR_WARN}$*${COLOR_RESET}"; }
 error() { echo -e "${COLOR_ERR}$*${COLOR_RESET}"; }
 success() { echo -e "${COLOR_SEL}✔ $*${COLOR_RESET}"; }
 dim() { echo -e "${COLOR_DIM}$*${COLOR_RESET}"; }
-
-sanitize_filename() { echo "$1" | tr ' ' '_' | tr -cd 'A-Za-z0-9._-'; }
-
-# Kürzt eine Datei auf maximal $2 Zeilen (via tail).
-# Wird von add_to_history, add_to_recent und save_search_term genutzt.
+sanitize_filename() { sed 's/ /_/g; s/[^A-Za-z0-9._-]//g' <<< "$1"; }
 trim_file_to_lines() {
     local file="$1" max="$2"
     [ -f "$file" ] || return 0
@@ -261,15 +202,12 @@ trim_file_to_lines() {
         tail -n "$max" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" || true
     fi
 }
-
 trim_whitespace() {
     local s="$1"
     s="${s#"${s%%[![:space:]]*}"}"
     s="${s%"${s##*[![:space:]]}"}"
     printf "%s" "$s"
 }
-
-# Cross-platform file mtime (optimization: check method once)
 get_file_mtime() {
     local file="$1"
     if [ -z "${_STAT_CMD:-}" ]; then
@@ -281,7 +219,6 @@ get_file_mtime() {
     fi
     $_STAT_CMD "$file" 2>/dev/null || echo 0
 }
-
 copy_to_clipboard() {
     local text="$1"
     if command -v pbcopy &>/dev/null; then
@@ -296,14 +233,9 @@ copy_to_clipboard() {
         warn "No clipboard tool available (pbcopy/xclip/xsel)"
     fi
 }
-
 validate_filename() {
     local fn="$1"
-    
-    # Reject empty names
     [ -z "$fn" ] && return 1
-    
-    # Reject dangerous paths
     [[ "$fn" =~ \.\. ]] && return 1      # Parent directory
     [[ "$fn" = *'/'* ]] && return 1      # Absolute/relative paths
     [[ "$fn" = *"\${"* ]] && return 1    # Variable expansion
@@ -313,19 +245,10 @@ validate_filename() {
     [[ "$fn" = *'&'* ]] && return 1      # Background operators
     [[ "$fn" = *'>'* ]] && return 1      # Redirection
     [[ "$fn" = *'<'* ]] && return 1      # Redirection
-    
-    # Allow: alphanumeric, dots, dashes, underscores, plus common extensions
     [[ "$fn" =~ ^[a-zA-Z0-9._-]+$ ]] && return 0
-    
     return 1
 }
-
-# ==============================================================================
-#  TERMINAL & SSH DETECTION
-# ==============================================================================
-
 check_interactive() {
-    # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
         is_interactive=1
         init_terminal_capabilities
@@ -333,21 +256,17 @@ check_interactive() {
         is_interactive=0
     fi
 }
-
 check_ssh_session() {
-    # Check for SSH environment
     if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
         is_ssh_session=1
     else
         is_ssh_session=0
     fi
 }
-
-# Optimized terminal capability caching
+_TPUT_INITIALIZED=0
 init_terminal_capabilities() {
-    # Only run once
-    [ -n "${TPUT_COLS:-}" ] && return
-
+    [ "${_TPUT_INITIALIZED:-0}" -eq 1 ] && return
+    _TPUT_INITIALIZED=1
     if command -v tput >/dev/null 2>&1; then
         TPUT_CUP="$(tput cup 0 0 2>/dev/null)"
         TPUT_CIVIS="$(tput civis 2>/dev/null)"
@@ -359,30 +278,17 @@ init_terminal_capabilities() {
         HAS_TPUT=0
         TPUT_COLS=80
     fi
-    # Update cols on resize
     trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80)' WINCH
 }
-
 consume_keypress() {
-    # Suppress echo so arrow keys / escape sequences are not printed to the
-    # terminal while waiting for the keypress (e.g. after stty sane in execute_task).
     stty -echo 2>/dev/null
     read_key >/dev/null
     stty echo 2>/dev/null
 }
-
-# Enable raw interactive input mode for the main loop.
-# Flags: no echo, no canonical buffering, pass signals, block until 1 char min.
 set_raw_mode() {
     stty -echo -icanon time 0 min 1 isig 2>/dev/null
 }
-
 drain_stdin() {
-    # Non-blocking drain of any pending stdin bytes (e.g. escape sequence tails
-    # or task output left in the buffer). Explicitly disables icanon so this
-    # works regardless of the current terminal mode (e.g. after stty sane).
-    # Uses bs=128 to empty buffers with fewer fork iterations.
-    # Restores blocking raw mode (min 1) afterwards.
     stty -icanon min 0 time 0 2>/dev/null
     local _d
     while true; do
@@ -391,18 +297,10 @@ drain_stdin() {
     done
     stty min 1 time 0 2>/dev/null
 }
-
 read_key() {
     local key=""
-    # 1. Read first char (blocking)
-    # This relies on the outer loop setting stty to blocking (min 1)
     if ! read -rsn1 key; then return 1; fi
-
-    # 2. Check for ESC sequence
     if [ "$key" = $'\x1b' ]; then
-        # Save current stty state and switch to non-blocking with 100ms window.
-        # Use ONE dd call (bs=10) instead of a loop of bs=1 forks: fewer subshells,
-        # no race between fork overhead and byte delivery.
         local previous_stty
         previous_stty=$(stty -g)
         stty -icanon min 0 time 1 2>/dev/null
@@ -413,22 +311,10 @@ read_key() {
     fi
     printf "%s" "$key"
 }
-
-# Optimized version of read_key that assumes stty is already set to raw mode.
-# This avoids the overhead of calling stty twice per keypress.
 read_key_raw() {
     local key=""
-    # 1. Read first char (blocking 1 char, min 1 time 0)
     if ! read -rsn1 key; then return 1; fi
-
-    # 2. Check for ESC sequence
     if [ "$key" = $'\x1b' ]; then
-        # Read the remainder of the escape sequence with ONE dd call (up to 10 bytes).
-        # Using time 1 (100ms window) with min 0: dd returns immediately once bytes
-        # are available (arrow keys deliver [A within ~1ms on local terminals), and
-        # waits at most 100ms if nothing arrives (pure ESC press).
-        # One fork instead of 5 serial forks avoids the race condition where
-        # fork overhead (~5-20ms) caused [A to be missed at time 0.
         stty min 0 time 1 2>/dev/null
         local seq
         seq=$(dd bs=10 count=1 2>/dev/null)
@@ -437,28 +323,20 @@ read_key_raw() {
     fi
     printf "%s" "$key"
 }
-
 print_ssh_hint() {
     cat << 'EOF'
 ════════════════════════════════════════════════════════════════
   ⚠️  SSH Session Detected (No TTY)
 ════════════════════════════════════════════════════════════════
   For interactive mode, reconnect with: ssh -t user@host
-  
   Example:
     ssh -t user@server.com "cd myproject && run"
-    
   Or using an alias:
     alias ssh-run="ssh -t"
     ssh-run user@server "cd myproject && run"
 ════════════════════════════════════════════════════════════════
 EOF
 }
-
-# ==============================================================================
-#  I18N / MESSAGES
-# ==============================================================================
-
 msg() {
     local key="$1"
     case "$UI_LANG" in
@@ -586,11 +464,6 @@ msg() {
             ;;
     esac
 }
-
-# ==============================================================================
-#  THEME SYSTEM & VISUAL EFFECTS
-# ==============================================================================
-
 apply_theme() {
     case "$UI_THEME" in
         "CYBER") 
@@ -627,15 +500,12 @@ apply_theme() {
             ;;
     esac
 }
-
-# Spinner for long-running tasks
 SPINNER_PID=""
 SPINNER_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
 show_spinner() {
     local message="$1"
     local delay=0.1
-    tput civis 2>/dev/null  # Hide cursor
+    if [ -n "${TPUT_CIVIS:-}" ]; then echo -ne "$TPUT_CIVIS"; else tput civis 2>/dev/null; fi
     (
         local i=0
         while true; do
@@ -647,45 +517,32 @@ show_spinner() {
     ) &
     SPINNER_PID=$!
 }
-
 stop_spinner() {
     if [ -n "$SPINNER_PID" ]; then
         kill "$SPINNER_PID" 2>/dev/null
         wait "$SPINNER_PID" 2>/dev/null
         SPINNER_PID=""
         printf "\r%80s\r" " "  # Clear spinner line
-        tput cnorm 2>/dev/null  # Show cursor
+        if [ -n "${TPUT_CNORM:-}" ]; then echo -ne "$TPUT_CNORM"; else tput cnorm 2>/dev/null; fi
     fi
 }
-
 render_status_bar() {
     local text="$1"
     local bar_width=60
     local padding=$(( (bar_width - ${#text}) / 2 ))
     local left_pad right_pad
-    # printf -v vermeidet Subshell-Overhead gegenüber $(printf ...)
     printf -v left_pad  '%*s' "$padding" ''
     printf -v right_pad '%*s' "$((bar_width - ${#text} - padding))" ''
-    # Rahmen-String einmalig berechnen und global cachen (Lazy Init)
     : "${_STATUS_BAR_BORDER:=$(printf '═%.0s' {1..60})}"
     echo -e "${COLOR_DIM}╔${_STATUS_BAR_BORDER}╗${COLOR_RESET}"
     echo -e "${COLOR_DIM}║${left_pad}${COLOR_RESET}${text}${COLOR_DIM}${right_pad}║${COLOR_RESET}"
     echo -e "${COLOR_DIM}╚${_STATUS_BAR_BORDER}╝${COLOR_RESET}"
 }
-
-# ==============================================================================
-#  CACHE MANAGEMENT
-# ==============================================================================
-
 readonly CACHE_DIR="/tmp/.run_cache_$$"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
-
-# Memoization: Hash wird nur neu berechnet, wenn config_path wechselt
 _cache_file_last_path=""
 _cache_file_last_result=""
-
 get_cache_file() {
-    # Gespeichertes Ergebnis zurückgeben, falls config_path unverändert
     if [ "$config_path" = "$_cache_file_last_path" ] && [ -n "$_cache_file_last_result" ]; then
         echo "$_cache_file_last_result"
         return 0
@@ -704,16 +561,13 @@ get_cache_file() {
     _cache_file_last_result="$CACHE_DIR/state_${config_hash}"
     echo "$_cache_file_last_result"
 }
-
 get_profile_cache_file() {
     echo "$CACHE_DIR/profiles_cache"
 }
-
 cache_profiles() {
     local cache_file
     cache_file=$(get_profile_cache_file)
     local cache_age=100000 
-    
     if [ -f "$cache_file" ]; then
         local mtime
         mtime=$(get_file_mtime "$cache_file")
@@ -721,23 +575,17 @@ cache_profiles() {
         now=$(date +%s)
         cache_age=$(( now - mtime ))
     fi
-    
-    # Cache valid for 60 seconds
     if [ "$cache_age" -ge 0 ] && [ "$cache_age" -lt 60 ]; then
         cat "$cache_file"
         return 0
     fi
-    
-    # Regenerate cache
     list_available_profiles > "$cache_file"
     cat "$cache_file"
 }
-
 clear_cache() {
     rm -rf "$CACHE_DIR" 2>/dev/null || true
     mkdir -p "$CACHE_DIR" 2>/dev/null || true
 }
-
 save_state() {
     local cf
     cf=$(get_cache_file)
@@ -746,16 +594,13 @@ save_state() {
         echo "WARN: failed to save state to $cf" >&2
     fi
 }
-
 load_state() {
     local c
     c=$(get_cache_file)
     if [ -f "$c" ]; then
-        selected_index=$(cat "$c")
+        { read -r selected_index < "$c"; } 2>/dev/null || true
     fi
 }
-
-# Cleanup cache on exit
 cleanup_wrapper() {
     rm -rf "$CACHE_DIR" 2>/dev/null
     if command -v cleanup_terminal >/dev/null 2>&1; then
@@ -764,11 +609,6 @@ cleanup_wrapper() {
 }
 trap cleanup_wrapper EXIT
 trap 'cleanup_wrapper; exit 130' INT TERM
-
-# ==============================================================================
-#  PROFILE MANAGEMENT
-# ==============================================================================
-
 find_local_config() {
     set +e
     local d="$PWD"
@@ -778,14 +618,12 @@ find_local_config() {
             set -e
             return 0
         fi
-        # Bash-String-Op statt dirname-Subshell
         d="${d%/*}"
         [ -z "$d" ] && d="/"
     done
     set -e
     return 1
 }
-
 find_named_config() {
     local name="$1"
     set +e
@@ -802,7 +640,6 @@ find_named_config() {
     set -e
     return 1
 }
-
 list_available_profiles() {
     local -a names=()
     local d="$PWD"
@@ -828,57 +665,41 @@ list_available_profiles() {
         printf "%s\n" "${names[@]}" | sort -u
     fi
 }
-
 init_profile() {
     local name="$1"
     [ -z "$name" ] && { echo "Error: profile name required"; return 1; }
-    
     local profile_file="$PWD/.tasks.$name"
     [ -f "$profile_file" ] && { echo "Profile $name already exists at $profile_file"; return 1; }
-    
     echo "Creating profile: $name"
     cat > "$profile_file" << 'EOF'
-# Profile: {NAME}
-# Auto-generated task list for {NAME}
-
 0|Task Name|command|Description here
 0|Another Task|echo "Hello"|Runs a simple command
 EOF
-    
     sed -i '' "s/{NAME}/$name/g" "$profile_file" 2>/dev/null || sed -i "s/{NAME}/$name/g" "$profile_file"
     echo "Profile created: $profile_file"
     echo "Edit with: ${EDITOR:-nano} $profile_file"
 }
-
 validate_config_file() {
     local profile_file="$1"
     local display_name="$2"
-
     if [ ! -f "$profile_file" ]; then
         error "Profile file not found: $profile_file"
         return 1
     fi
-
     echo "Validating profile: $display_name ($profile_file)"
     local errors=0
     local line_no=0
     local syntax_ok=true
-
     while IFS='|' read -r level name cmd desc || [ -n "$level" ]; do
         line_no=$((line_no + 1))
-        
-        # Skip comments and empty lines
         [[ "$level" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$level" ]] && continue
-        
-        # Validate format
         if [ -z "$name" ] || [ -z "$cmd" ]; then
             echo "  Line $line_no: Invalid format (missing fields)"
             errors=$((errors + 1))
             syntax_ok=false
         fi
     done < "$profile_file"
-
     if [ "$syntax_ok" = true ]; then
         success "Profile validation passed: $display_name"
         return 0
@@ -887,17 +708,14 @@ validate_config_file() {
         return 1
     fi
 }
-
 list_profiles_all() {
     local mode="${1:-text}"
     local profiles_str
     profiles_str=$(list_available_profiles)
-    
     if [ -z "$profiles_str" ]; then
         echo "No profiles found"
         return 0
     fi
-    
     if [ "$mode" = "json" ]; then
         echo "{"
         echo "  \"profiles\": ["
@@ -918,40 +736,26 @@ list_profiles_all() {
         done <<< "$profiles_str"
     fi
 }
-
-# ==============================================================================
-#  PROFILE LOADING & VALIDATION
-# ==============================================================================
-
 load_profile_config() {
     local profile_name="$1"
-    
-    # Temporarily change active_mode and config_path
     local saved_mode="$active_mode"
     local saved_config_path="$config_path"
-    
     active_mode="global"
     config_path="$HOME/.tasks.$profile_name"
-    
     if [ ! -f "$config_path" ]; then
         active_mode="$saved_mode"
         config_path="$saved_config_path"
         return 1
     fi
-    
     return 0
 }
-
 validate_profile() {
     local name="$1"
     [ -z "$name" ] && { echo "Error: profile name required"; return 1; }
-
     local profile_file
     profile_file=$(find_named_config "$name") || profile_file="$HOME/.tasks.$name"
-
     validate_config_file "$profile_file" "$name"
 }
-
 select_profile_menu() {
     local -a profiles=()
     local -a filtered_profiles=()
@@ -959,14 +763,11 @@ select_profile_menu() {
     local num=${#profiles[@]}
     [ "$num" -eq 0 ] && return 1
     [ ! -t 0 ] && return 1
-
     local page=0
     local per_page=9
     local filter_pattern=""
     local filter_active=0
-    
     while true; do
-        # Apply filter if active
         if [ "$filter_active" -eq 1 ] && [ -n "$filter_pattern" ]; then
             filtered_profiles=()
             for prof in "${profiles[@]}"; do
@@ -980,23 +781,18 @@ select_profile_menu() {
             local display_profiles=("${profiles[@]}")
             local display_num=${#display_profiles[@]}
         fi
-        
-        # Reset page if out of bounds
         local max_pages=$(( (display_num + per_page - 1) / per_page ))
         [ "$page" -ge "$max_pages" ] && page=$((max_pages - 1))
         [ "$page" -lt 0 ] && page=0
-        
         clear
         echo -e "${COLOR_HEAD}Profiles${COLOR_RESET}"
         if [ "$filter_active" -eq 1 ]; then
             echo -e "${COLOR_INFO}Filter: ${filter_pattern}_${COLOR_RESET} (ESC to clear)"
         fi
         echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-        
         local start=$((page * per_page))
         local end=$((start + per_page))
         [ "$end" -gt "$display_num" ] && end="$display_num"
-        
         if [ "$display_num" -eq 0 ]; then
             echo -e "${COLOR_DIM}No profiles match filter${COLOR_RESET}"
         else
@@ -1006,7 +802,6 @@ select_profile_menu() {
                 echo "${idx}) ${display_profiles[$i]}"
             done
         fi
-        
         echo ""
         if [ "$display_num" -gt "$per_page" ]; then
             echo -e "${COLOR_DIM}Page $((page + 1))/$max_pages  "
@@ -1016,7 +811,6 @@ select_profile_menu() {
         echo "[/] filter  0) Cancel"
         echo ""
         choice=$(read_key) || return 1
-        
         case "$choice" in
             [1-9])
                 local pick=$((start + choice - 1))
@@ -1067,42 +861,28 @@ select_profile_menu() {
         esac
     done
 }
-
-# ==============================================================================
-#  SEARCH & FILTER SYSTEM
-# ==============================================================================
-
 SEARCH_HISTORY_FILE="$HOME/.run_search_history"
 SEARCH_HISTORY_MAX=20
-
 save_search_term() {
     local term="$1"
     [ -z "$term" ] && return
-    
-    # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
         grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
         mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
     fi
-    
     echo "$term" >> "$SEARCH_HISTORY_FILE"
-    
-    # Keep only last N entries
     trim_file_to_lines "$SEARCH_HISTORY_FILE" "$SEARCH_HISTORY_MAX"
 }
-
 get_search_history() {
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        tac "$SEARCH_HISTORY_FILE" 2>/dev/null || tail -r "$SEARCH_HISTORY_FILE" 2>/dev/null || true
+        tail -r "$SEARCH_HISTORY_FILE" 2>/dev/null || tac "$SEARCH_HISTORY_FILE" 2>/dev/null || true
     fi
 }
-
 interactive_search() {
     local current_query=""
     local -a history_items=()
     IFS=$'\n' read -r -d '' -a history_items < <(get_search_history && printf '\0') || true
     local history_pos=-1
-    
     clear
     echo -e "${COLOR_HEAD}Search Tasks${COLOR_RESET}"
     echo -e "${COLOR_INFO}Type to search (ESC to cancel, Enter to apply):${COLOR_RESET}"
@@ -1111,7 +891,6 @@ interactive_search() {
     fi
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -n "Search: "
-    
     while true; do
         char=$(read_key) || return 1
         case "$char" in
@@ -1128,7 +907,6 @@ interactive_search() {
                 ;;
             $'\x1b[A'|$'\x1bOA')
                 if [ ${#history_items[@]} -gt 0 ]; then
-                    # Arrow Up - previous history
                     history_pos=$((history_pos + 1))
                     [ "$history_pos" -ge ${#history_items[@]} ] && history_pos=$((${#history_items[@]} - 1))
                     current_query="${history_items[$history_pos]}"
@@ -1138,7 +916,6 @@ interactive_search() {
                 ;;
             $'\x1b[B'|$'\x1bOB')
                 if [ "$history_pos" -gt 0 ]; then
-                    # Arrow Down - next history
                     history_pos=$((history_pos - 1))
                     if [ "$history_pos" -lt 0 ]; then
                         history_pos=-1
@@ -1165,34 +942,24 @@ interactive_search() {
         esac
     done
 }
-
-# ==============================================================================
-#  TAG SYSTEM
-# ==============================================================================
-
 extract_tags() {
     local desc="$1"
     local result=""
-    # Bash-Regex statt echo|grep|tr (3 externe Prozesse gespart)
     local rest="$desc"
     while [[ "$rest" =~ (#[a-zA-Z0-9_-]+) ]]; do
         local _tag="${BASH_REMATCH[1]}"
         result+="$_tag "
-        # SC2295: BASH_REMATCH in ${#} als Pattern muss über Variable referenziert werden
         rest="${rest#*"$_tag"}"
     done
     printf '%s' "$result"
 }
-
 has_tag() {
     local desc="$1"
     local tag="$2"
     [[ "$desc" =~ $tag ]]
 }
-
 get_all_tags() {
     local -a tags=()
-    # Process-Substitution: kein all_output-String im Speicher
     while IFS='|' read -r level name cmd desc; do
         local task_tags
         task_tags=$(extract_tags "$desc")
@@ -1206,25 +973,20 @@ get_all_tags() {
             cat "$config_path"
         fi
     )
-    # Unique sort
     printf "%s\n" "${tags[@]}" | sort -u
 }
-
 show_tag_menu() {
     local -a all_tags=()
     IFS=$'\n' read -r -d '' -a all_tags < <(get_all_tags && printf '\0') || true
     local num_tags=${#all_tags[@]}
-    
     if [ "$num_tags" -eq 0 ]; then
         echo -e "${COLOR_DIM}No tags found. Add tags with #tagname in task descriptions.${COLOR_RESET}"
         sleep 1
         return
     fi
-    
     clear
     echo -e "${COLOR_HEAD}🏷  Filter by Tag${COLOR_RESET}"
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-    
     echo "0) ${COLOR_SEL}[All Tasks]${COLOR_RESET}"
     for (( i=0; i<num_tags; i++ )); do
         if [ "$tag_filter" == "${all_tags[$i]}" ]; then
@@ -1233,10 +995,8 @@ show_tag_menu() {
             printf "%d) %s\n" "$((i+1))" "${all_tags[$i]}"
         fi
     done
-    
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo "[1-9] Filter [q]uit"
-    
     while true; do
         key=$(read_key) || break
         case "$key" in
@@ -1262,13 +1022,7 @@ show_tag_menu() {
     done
     selected_index=0
 }
-
-# ==============================================================================
-#  TASK FAVORITES
-# ==============================================================================
-
 readonly RUN_FAVORITES_FILE="$HOME/.run_favorites"
-
 is_favorite() {
     local task_name="$1"
     if [ -f "$RUN_FAVORITES_FILE" ]; then
@@ -1277,7 +1031,6 @@ is_favorite() {
         return 1
     fi
 }
-
 toggle_favorite() {
     local task_name="$1"
     if is_favorite "$task_name"; then
@@ -1291,34 +1044,36 @@ toggle_favorite() {
     fi
     sleep 0.5
 }
-
 show_favorites() {
     clear
     echo -e "${COLOR_HEAD}⭐ Favorite Tasks${COLOR_RESET}"
-    
-    if [ ! -f "$RUN_FAVORITES_FILE" ] || [ ! -s "$RUN_FAVORITES_FILE" ]; then
+    local -a fav_list=()
+    if [ -f "$RUN_FAVORITES_FILE" ] && [ -s "$RUN_FAVORITES_FILE" ]; then
+        while IFS= read -r _fline || [ -n "$_fline" ]; do
+            [ -n "$_fline" ] && fav_list+=("$_fline")
+        done < "$RUN_FAVORITES_FILE"
+    fi
+    if [ "${#fav_list[@]}" -eq 0 ]; then
         echo -e "${COLOR_DIM}No favorites yet. Press [*] on a task to add it!${COLOR_RESET}"
     else
         echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
         local idx=1
-        while IFS= read -r fav_name; do
+        for _fav in "${fav_list[@]}"; do
             if [ "$idx" -le 9 ]; then
-                printf "%d) ${COLOR_SEL}%s${COLOR_RESET}\n" "$idx" "$fav_name"
+                printf "%d) ${COLOR_SEL}%s${COLOR_RESET}\n" "$idx" "$_fav"
             else
-                printf "  ${COLOR_DIM}%s${COLOR_RESET}\n" "$fav_name"
+                printf "  ${COLOR_DIM}%s${COLOR_RESET}\n" "$_fav"
             fi
             idx=$((idx + 1))
-        done < "$RUN_FAVORITES_FILE"
+        done
     fi
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
-    
     while true; do
         key=$(read_key) || break
         if [[ "$key" =~ [1-9] ]]; then
             local sel=$((key - 1))
-            local fav_name
-            fav_name=$(sed -n "$((sel + 1))p" "$RUN_FAVORITES_FILE" 2>/dev/null)
+            local fav_name="${fav_list[$sel]:-}"  # Array-Index statt sed-Fork
             if [ -n "$fav_name" ]; then
                 if find_task_in_menu "$fav_name" "_execute_fav_callback"; then
                     clear
@@ -1334,18 +1089,12 @@ show_favorites() {
     done
     clear
 }
-
 _execute_fav_callback() {
     local name="$1"
     local cmd="$2"
     local desc="$3"
     execute_task "$cmd" "$name" "$desc"
 }
-
-# ==============================================================================
-#  TASK HISTORY & LOGGING
-# ==============================================================================
-
 add_to_history() {
     local task_name="$1"
     local exit_code="$2"
@@ -1355,13 +1104,9 @@ add_to_history() {
     local status="✔"
     [ "$exit_code" -ne 0 ] && status="✗"
     echo "$timestamp | $status | $task_name | exit:$exit_code | time:${exec_time}s" >> "$RUN_HISTORY_FILE"
-    
-    # Keep history file size manageable
     trim_file_to_lines "$RUN_HISTORY_FILE" "$RUN_HISTORY_MAX"
-
     add_to_recent "$task_name" "$exec_time"
 }
-
 show_history() {
     clear
     echo -e "${COLOR_HEAD}$(msg history_label)${COLOR_RESET}"
@@ -1371,7 +1116,6 @@ show_history() {
         local lastlines
         lastlines=$(tail -20 "$RUN_HISTORY_FILE")
         while IFS= read -r line; do
-            # Bash-String-Op statt echo|cut|xargs (2 externe Prozesse gespart)
             local _s="${line#*| }"
             _s="${_s%% |*}"
             if [ "$_s" = "✔" ]; then
@@ -1384,46 +1128,35 @@ show_history() {
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
-
 add_to_recent() {
     local task_name="$1"
     local exec_time="$2"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
-    # Format: timestamp|config_path|task_name|exec_time
     echo "$timestamp|$config_path|$task_name|${exec_time}s" >> "$RUN_RECENT_FILE"
-    
-    # Keep only latest entries
     trim_file_to_lines "$RUN_RECENT_FILE" "$RUN_RECENT_MAX"
 }
-
 show_recent() {
     clear
     echo -e "${COLOR_HEAD}$(msg recent_tasks)${COLOR_RESET}"
-    
     if [ ! -f "$RUN_RECENT_FILE" ] || [ ! -s "$RUN_RECENT_FILE" ]; then
         echo -e "${COLOR_DIM}No recent tasks yet.${COLOR_RESET}"
         echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
         consume_keypress
         return
     fi
-    
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     local -a lines=()
     IFS=$'\n' read -r -d '' -a lines < <(tail -n 20 "$RUN_RECENT_FILE" 2>/dev/null && printf '\0') || true
-    
     local idx=1
     for line in "${lines[@]}"; do
         IFS='|' read -r _ path name rest <<< "$line"
-        # ${##*/} statt basename-Subshell
         local short_path="${path##*/}"
         [ "$idx" -le 9 ] && printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$name" "$short_path" || printf "  ${COLOR_DIM}%s (%s)${COLOR_RESET}\n" "$name" "$short_path"
         idx=$((idx + 1))
     done
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
-    
     while true; do
         key=$(read_key) || break
         if [[ "$key" =~ [1-9] ]]; then
@@ -1455,35 +1188,29 @@ show_recent() {
     done
     clear
 }
-
 _execute_recent_callback() {
     local name="$1"
     local cmd="$2"
     local desc="$3"
     execute_task "$cmd" "$name" "$desc"
 }
-
 show_logs() {
     clear
     echo -e "${COLOR_HEAD}Recent Logs${COLOR_RESET}"
     echo -e "${COLOR_DIM}Last 9 log files:${COLOR_RESET}"
     echo ""
-    
     local -a log_files=()
     IFS=$'\n' read -r -d '' -a log_files < <(find "$RUN_LOG_DIR" -type f -name "*.log" 2>/dev/null | sort -r | head -9 && printf '\0') || true
-    
     if [ ${#log_files[@]} -eq 0 ]; then
         echo -e "${COLOR_DIM}No log files found.${COLOR_RESET}"
     else
         local idx=1
         for log_file in "${log_files[@]}"; do
-            # ${##*/} statt basename-Subshell
             echo "$idx) ${log_file##*/}"
             idx=$((idx + 1))
         done
         echo ""
         echo "[1-9] View [q]uit"
-        
         while true; do
             key=$(read_key) || break
             if [[ "$key" =~ [1-9] ]]; then
@@ -1503,48 +1230,32 @@ show_logs() {
             fi
         done
     fi
-    
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
-
-# ==============================================================================
-#  TASK DEPENDENCIES & PARALLEL EXECUTION
-# ==============================================================================
-
 parse_task_deps() {
     local task_cmd="$1"
-    # Extract [depends: task1,task2] from command
     if [[ "$task_cmd" =~ \[depends:([^\]]+)\] ]]; then
         echo "${BASH_REMATCH[1]}"
     fi
 }
-
 execute_task_deps() {
     local deps_str="$1"
     local IFS=','
     local -a deps
     read -r -a deps <<< "$deps_str"
-    
     echo -e "${COLOR_INFO}$(msg task_depends):${COLOR_RESET}"
-    
-    # Check if parallel execution is enabled
     if [ "${RUN_PARALLEL_DEPS:-0}" = "1" ] && [ "${#deps[@]}" -gt 1 ]; then
         echo -e "${COLOR_DIM}  (running ${#deps[@]} dependencies in parallel)${COLOR_RESET}"
         local -a dep_pids=()
         local -a dep_names=()
         local -a dep_logs=()
-        
         for dep in "${deps[@]}"; do
             dep=$(trim_whitespace "$dep")
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
-            
-            # Create log file for this dependency
-            local dep_log="/tmp/run_dep_${dep}_$$.log"
+            local dep_log="${CACHE_DIR}/dep_${dep}_$$.log"
             dep_logs+=("$dep_log")
             dep_names+=("$dep")
-            
-            # Execute in background
             (
                 if ! find_task_in_menu "$dep" '_execute_dep_callback' 2>&1 | tee "$dep_log"; then
                     exit 1
@@ -1552,11 +1263,8 @@ execute_task_deps() {
             ) &
             dep_pids+=("$!")
         done
-        
-        # Wait for all dependencies to complete
         echo ""
         show_spinner "Waiting for ${#deps[@]} parallel dependencies..."
-        
         local all_success=1
         for i in "${!dep_pids[@]}"; do
             if ! wait "${dep_pids[$i]}"; then
@@ -1565,24 +1273,17 @@ execute_task_deps() {
                 all_success=0
             fi
         done
-        
         stop_spinner
         [ "$all_success" -eq 1 ] && echo -e "${COLOR_SEL}✔ All dependencies completed${COLOR_RESET}"
-        
-        # Cleanup log files
         for log in "${dep_logs[@]}"; do
             [ -f "$log" ] && rm -f "$log"
         done
-        
         [ "$all_success" -eq 0 ] && return 1
         return 0
     else
-        # Sequential execution (default)
         for dep in "${deps[@]}"; do
             dep=$(trim_whitespace "$dep")
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
-            
-            # Find and execute the dependency task using helper
             if ! find_task_in_menu "$dep" '_execute_dep_callback'; then
                 echo -e "${COLOR_ERR}❌ Dependency '$dep' not found in:${COLOR_RESET}"
                 for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
@@ -1591,52 +1292,35 @@ execute_task_deps() {
         done
     fi
 }
-
 _execute_dep_callback() {
     local dep_name="$1"
     local dep_cmd="$2"
     local dep_desc="$3"
     execute_task "$dep_cmd" "$dep_name" "$dep_desc" || return 1
 }
-
-# ==============================================================================
-#  MULTI-PROFILE EXECUTION
-# ==============================================================================
-
 execute_multi_profile_task() {
     local task_name="$1"
     local profiles_str="$2"  # comma-separated
     local IFS=','
     local -a profiles
     read -r -a profiles <<< "$profiles_str"
-    
     echo -e "${COLOR_HEAD}Running task across ${#profiles[@]} profiles:${COLOR_RESET}"
-    
-    # Check if parallel execution is enabled
     if [ "${RUN_PARALLEL_MULTI:-0}" = "1" ] && [ "${#profiles[@]}" -gt 1 ]; then
         echo -e "${COLOR_DIM}  (running in parallel)${COLOR_RESET}"
         local -a profile_pids=()
         local -a profile_names=()
         local -a profile_logs=()
-        
         for prof in "${profiles[@]}"; do
             prof=$(trim_whitespace "$prof")
             echo -e "  ${COLOR_DIM}→ [$prof] $task_name${COLOR_RESET}"
-            
-            # Create log file for this profile execution
-            local prof_log="/tmp/run_multi_prof_${prof}_$$.log"
+            local prof_log="${CACHE_DIR}/multi_prof_${prof}_$$.log"
             profile_logs+=("$prof_log")
             profile_names+=("$prof")
-            
-            # Execute in background with profile context
             (
-                # Load profile configuration
                 if ! load_profile_config "$prof"; then
                     echo -e "${COLOR_ERR}Failed to load profile: $prof${COLOR_RESET}" | tee "$prof_log"
                     exit 1
                 fi
-                
-                # Find and execute the task in this profile
                 if ! find_task_in_menu "$task_name" '_execute_profile_callback'; then
                     echo -e "${COLOR_ERR}Task not found in profile: $prof${COLOR_RESET}" | tee "$prof_log"
                     exit 1
@@ -1644,11 +1328,8 @@ execute_multi_profile_task() {
             ) &
             profile_pids+=("$!")
         done
-        
-        # Wait for all profile executions
         echo ""
         show_spinner "Waiting for ${#profiles[@]} profile executions..."
-        
         local all_success=1
         for i in "${!profile_pids[@]}"; do
             if ! wait "${profile_pids[$i]}"; then
@@ -1657,65 +1338,45 @@ execute_multi_profile_task() {
                 all_success=0
             fi
         done
-        
         stop_spinner
         [ "$all_success" -eq 1 ] && echo -e "${COLOR_SEL}✔ All profiles completed${COLOR_RESET}"
-        
-        # Cleanup log files
         for log in "${profile_logs[@]}"; do
             [ -f "$log" ] && rm -f "$log"
         done
-        
         [ "$all_success" -eq 0 ] && return 1
         return 0
     else
-        # Sequential execution
         for prof in "${profiles[@]}"; do
             prof=$(trim_whitespace "$prof")
             echo -e "  ${COLOR_INFO}→ Profile: $prof${COLOR_RESET}"
-            
-            # Load profile configuration
             if ! load_profile_config "$prof"; then
                 echo -e "${COLOR_ERR}Failed to load profile: $prof${COLOR_RESET}"
                 return 1
             fi
-            
-            # Find and execute the task in this profile
             if ! find_task_in_menu "$task_name" '_execute_profile_callback'; then
                 echo -e "${COLOR_ERR}Task not found in profile: $prof${COLOR_RESET}"
                 return 1
             fi
         done
-        
         echo -e "${COLOR_SEL}✔ All profiles completed${COLOR_RESET}"
     fi
 }
-
 _execute_profile_callback() {
     local task_name="$1"
     local task_cmd="$2"
     local task_desc="$3"
     execute_task "$task_cmd" "$task_name" "$task_desc" || return 1
 }
-
-# ==============================================================================
-#  PROJECT ANALYSIS
-# ==============================================================================
-
 analyze_project() {
     local profile="${1:-.}"
     local config_file=".tasks"
-    
     if [ "$profile" != "." ] && [ "$profile" != "" ]; then
         config_file=".tasks.$profile"
     fi
-    
     if [ ! -f "$config_file" ]; then
         echo -e "${COLOR_ERR}✗ No .tasks file found${COLOR_RESET}"
         return 1
     fi
-    
-    # Einmaliger awk-Durchlauf statt 10 separater grep-Aufrufe
     local total_tasks level_0 level_1 deps_count parallel_count \
           has_lint has_test has_build has_deploy test_count
     read -r total_tasks level_0 level_1 deps_count parallel_count \
@@ -1734,23 +1395,16 @@ analyze_project() {
             END { print (tot+0),(l0+0),(l1+0),(dep+0),(par+0),(lint+0),(tst+0),(bld+0),(dpl+0),(tc+0) }
         ' "$config_file" 2>/dev/null
     )
-
     echo -e "\n${COLOR_SEL}📊 Project Analysis${COLOR_RESET}"
     echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}"
-    
-    # 1. Basic Stats
     echo -e "${COLOR_INFO}📈 Statistics:${COLOR_RESET}"
     echo -e "  ${COLOR_DIM}Total Tasks:${COLOR_RESET} $total_tasks"
     echo -e "  ${COLOR_DIM}Main Tasks (Level 0):${COLOR_RESET} $level_0"
     [ "$level_1" -gt 0 ] && echo -e "  ${COLOR_DIM}Sub Tasks (Level 1):${COLOR_RESET} $level_1"
     echo -e "  ${COLOR_DIM}Tasks with Dependencies:${COLOR_RESET} $deps_count"
     echo -e "  ${COLOR_DIM}Parallel-ready Tasks:${COLOR_RESET} $parallel_count"
-    
     echo ""
-    
-    # 2. Recommendations
     echo -e "${COLOR_INFO}💡 Recommendations:${COLOR_RESET}"
-    
     if [ "$total_tasks" -gt 50 ]; then
         echo -e "  ${COLOR_WARN}⚠${COLOR_RESET}  ${COLOR_DIM}High task count (${total_tasks}):${COLOR_RESET}"
         echo -e "     Consider splitting into profiles:"
@@ -1760,7 +1414,6 @@ analyze_project() {
         echo -e "     ${COLOR_DIM}Command: run dev / run prod / run test${COLOR_RESET}"
         echo ""
     fi
-    
     if [ "$deps_count" -eq 0 ] && [ "$total_tasks" -gt 5 ]; then
         echo -e "  ${COLOR_INFO}ℹ${COLOR_RESET}  ${COLOR_DIM}No dependencies found:${COLOR_RESET}"
         echo -e "     Consider adding task chains for workflows:"
@@ -1769,7 +1422,6 @@ analyze_project() {
         echo -e "     ${COLOR_DIM}• 2|Deploy|npm deploy depends:1|Deploy (after test)${COLOR_RESET}"
         echo ""
     fi
-    
     if [ "$parallel_count" -eq 0 ] && [ "$total_tasks" -gt 10 ]; then
         echo -e "  ${COLOR_INFO}⚡${COLOR_RESET}  ${COLOR_DIM}Parallel execution not configured:${COLOR_RESET}"
         echo -e "     Enable for faster execution:"
@@ -1779,21 +1431,14 @@ analyze_project() {
         fi
         echo ""
     fi
-    
-    # (has_lint/has_test/has_build/has_deploy/test_count wurden bereits oben via awk befüllt)
-    
     echo -e "${COLOR_INFO}✓ Quality Score:${COLOR_RESET}"
     [ "$has_lint" -gt 0 ] && echo -e "  ✓ ${COLOR_SEL}Linting${COLOR_RESET} (code quality)" || echo -e "  ✗ ${COLOR_DIM}Linting${COLOR_RESET} (code quality) - consider adding"
     [ "$has_test" -gt 0 ] && echo -e "  ✓ ${COLOR_SEL}Testing${COLOR_RESET} (test coverage)" || echo -e "  ✗ ${COLOR_DIM}Testing${COLOR_RESET} (test coverage) - consider adding"
     [ "$has_build" -gt 0 ] && echo -e "  ✓ ${COLOR_SEL}Building${COLOR_RESET} (production ready)" || echo -e "  ✗ ${COLOR_DIM}Building${COLOR_RESET} (production ready) - consider adding"
     [ "$has_deploy" -gt 0 ] && echo -e "  ✓ ${COLOR_SEL}Deployment${COLOR_RESET} (automation)" || echo -e "  ✗ ${COLOR_DIM}Deployment${COLOR_RESET} (automation) - consider adding"
-    
     echo ""
-    
-    # 3. Quick wins
     local quick_wins=0
     echo -e "${COLOR_INFO}🎯 Quick Wins:${COLOR_RESET}"
-    
     if [ "$total_tasks" -lt 20 ] && [ "$deps_count" -eq 0 ]; then
         echo -e "  1. Add dependencies to create task workflows"
         quick_wins=$((quick_wins + 1))
@@ -1806,73 +1451,49 @@ analyze_project() {
         quick_wins=$((quick_wins + 1))
         echo -e "  ${quick_wins}. Create 2-3 profiles to reduce menu clutter"
     fi
-    
     if [ "$quick_wins" -eq 0 ]; then
         echo -e "  ${COLOR_SEL}✓ No immediate improvements needed - project well-structured!${COLOR_RESET}"
     fi
-    
     echo ""
-    
-    # 4. Next steps
     echo -e "${COLOR_INFO}📚 Next Steps:${COLOR_RESET}"
     echo -e "  • Run: ${COLOR_DIM}run${COLOR_RESET}  (use interactive menu)"
     echo -e "  • Edit: ${COLOR_DIM}run --edit${COLOR_RESET}  (edit .tasks file)"
     echo -e "  • Validate: ${COLOR_DIM}run --validate${COLOR_RESET}  (check syntax)"
     echo -e "  • Documentation: ${COLOR_DIM}docs/ADVANCED_USAGE.md${COLOR_RESET}  (learn patterns)"
-    
     echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}\n"
-    
     return 0
 }
-
-# ==============================================================================
-#  TASK EXECUTION HELPERS
-# ==============================================================================
-
 find_task_in_menu() {
-    # Find task by name in menu_options and execute callback.
-    # menu_options format: level|name|cmd|desc — skip level field with _level.
     local search_name="$1"
     local callback="$2"
     local -a opts
     IFS=$'\n' read -d '' -r -a opts < <(get_menu_options) || true
-    
     for opt in "${opts[@]}"; do
         IFS='|' read -r _level opt_name opt_cmd opt_desc <<< "$opt"
         if [ "$opt_name" = "$search_name" ]; then
-            # Direkter Funktionsaufruf statt eval: schneller und sicherer
             "$callback" "$opt_name" "$opt_cmd" "$opt_desc"
             return 0
         fi
     done
     return 1
 }
-
 preview_task() {
     local cmd="$1"
     local name="$2"
     local desc="$3"
-    
     clear
     echo -e "${COLOR_HEAD}Preview: $name${COLOR_RESET}"
     echo -e "${COLOR_DIM}──────────────────────────────────────────────────────────────${COLOR_RESET}"
-    
     echo -e "${COLOR_INFO}Description:${COLOR_RESET}"
     echo -e "  $desc\n"
-    
     echo -e "${COLOR_INFO}Command to execute:${COLOR_RESET}"
     echo -e "  ${COLOR_SEL}$cmd${COLOR_RESET}\n"
-    
     if [[ "$desc" == "[!]"* ]]; then
         echo -e "${COLOR_WARN}⚠ Requires confirmation${COLOR_RESET}\n"
     fi
-    
-    # Bash-Regex statt echo|grep-Fork
     if [[ "$cmd" == *'<<'* ]]; then
         echo -e "${COLOR_INFO}ℹ This task has inputs that will be prompted${COLOR_RESET}\n"
     fi
-    
-    # Check for dependencies
     local deps
     deps=$(parse_task_deps "$cmd")
     if [ -n "$deps" ]; then
@@ -1885,27 +1506,21 @@ preview_task() {
         done
         echo ""
     fi
-    
     echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
-
-# ==============================================================================
-#  TASK EXECUTION ENGINE
-# ==============================================================================
-
 select_dropdown() {
     local options_str="$1"
     local -a options=()
-    # mapfile (readarray) ist Bash 4+; auf macOS läuft /bin/bash 3.2 → portabler while-Loop
-    while IFS= read -r _opt; do
+    local -a _raw_opts
+    IFS=',' read -r -a _raw_opts <<< "$options_str"
+    local _opt
+    for _opt in "${_raw_opts[@]}"; do
         [ -n "$_opt" ] && options+=("$_opt")
-    done < <(printf '%s\n' "$options_str" | tr ',' '\n')
+    done
     local selected=0
     local num=${#options[@]}
-    
     while true; do
-        # Cursor zurück auf 0,0 statt clear → kein Flicker (wie Hauptmenü)
         if [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_CUP:-}" ]; then
             echo -ne "$TPUT_CUP"
         else
@@ -1920,9 +1535,7 @@ select_dropdown() {
             fi
         done
         echo -e "\n${COLOR_DIM}$(msg dropdown_hint)${COLOR_RESET}"
-        # Rest der Zeilen löschen damit alte Einträge nicht stehen bleiben
         [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_ED:-}" ] && echo -ne "$TPUT_ED"
-        
         key=$(read_key) || return 1
         case "$key" in
             $'\x1b[A'|$'\x1bOA') selected=$((selected - 1));;
@@ -1939,32 +1552,25 @@ select_dropdown() {
         fi
     done
 }
-
 render_progress_bar() {
     local percent=$1
     local width=${2:-30}
     local filled=$((percent * width / 100))
     local empty=$((width - filled))
     local bar_filled bar_empty
-    # printf -v mit Padding baut den Balken in einem einzigen Aufruf (bash 3.1+, kein Loop)
     printf -v bar_filled '%*s' "$filled" ''
     printf -v bar_empty  '%*s' "$empty"  ''
     printf "%s[%s%s] %3d%%${COLOR_RESET}" \
         "$COLOR_SEL" "${bar_filled// /=}" "${bar_empty// /-}" "$percent"
 }
-
 process_progress_output() {
     local line="$1"
-    
-    # Check for [progress:X%] marker
     if [[ "$line" =~ \[progress:([0-9]+)%\] ]]; then
         local percent="${BASH_REMATCH[1]}"
         render_progress_bar "$percent"
         echo ""
         return 0  # Suppress original line
     fi
-    
-    # Check for [progress:X/Y] marker (e.g., [progress:3/10])
     if [[ "$line" =~ \[progress:([0-9]+)/([0-9]+)\] ]]; then
         local current="${BASH_REMATCH[1]}"
         local total="${BASH_REMATCH[2]}"
@@ -1973,12 +1579,9 @@ process_progress_output() {
         echo ""
         return 0  # Suppress original line
     fi
-    
-    # Return line normally if no progress marker
     echo "$line"
-    return 1
+    return 0  # 0 statt 1: stabiler bei set -e, semantisch korrekt (kein Fehler)
 }
-
 execute_task_pipeline() {
     local task_cmd="$1"
     local steps_str="${task_cmd#tasks:}"
@@ -1998,7 +1601,6 @@ execute_task_pipeline() {
     done
     return 0
 }
-
 execute_tasks_parallel() {
     local -a keys=()
     IFS=$'\n' read -r -d '' -a keys < <(printf "%s\n" "${!multi_select_map[@]}" | sort -n && printf '\0') || true
@@ -2027,7 +1629,6 @@ execute_tasks_parallel() {
         start_time=$(date +%s)
         (
             if command -v timeout >/dev/null 2>&1; then
-                # shellcheck disable=SC2016
                 timeout "$task_timeout" env \
                     RUN_MODE="$active_mode" \
                     RUN_DIR="$(dirname "$config_path")" \
@@ -2039,7 +1640,6 @@ execute_tasks_parallel() {
                     ' 2>&1 | tee "$log_file"
                 exit "${PIPESTATUS[0]}"
             else
-                # shellcheck disable=SC2016
                 env \
                     RUN_MODE="$active_mode" \
                     RUN_DIR="$(dirname "$config_path")" \
@@ -2076,50 +1676,38 @@ execute_tasks_parallel() {
             echo -e "${COLOR_ERR}✗ ${names[$i]}${COLOR_RESET} (${dur}s)"
         fi
     done
-    # Parallel tasks may have altered terminal state — restore and suppress echo
-    # before the "press key" prompt so no garbage appears on screen.
     stty sane 2>/dev/null || true
     stty -echo 2>/dev/null || true
     drain_stdin
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
 }
-
 execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
     dry_run_mode=0  # Reset dry-run flag
-    
-    # Show preview if interactive
     if [ "$is_interactive" -eq 1 ]; then
         if ! preview_task "$cmd" "$name" "$desc"; then
             return  # User cancelled
         fi
     fi
-
     if [[ "$cmd" == tasks:* ]]; then
         execute_task_pipeline "$cmd"
         return $?
     fi
-    
     if [ "$is_interactive" -eq 1 ]; then
         tput cnorm 2>/dev/null
     fi
     clear 
     echo -e "${COLOR_HEAD}$(msg executing)${COLOR_RESET} $name"
-    
     if [[ "$desc" == "[!]"* ]]; then
         echo -e "\n${COLOR_WARN}⚠ $(msg warning_label): ${desc#"[!] "}${COLOR_RESET}"
         read -p "$(msg confirm_prompt) " -n 1 -r; echo ""; [[ ! $REPLY =~ ^[Yy]$ ]] && return
     fi
-
-    # Handle task dependencies
     local deps
     deps=$(parse_task_deps "$cmd")
     if [ -n "$deps" ]; then
         execute_task_deps "$deps" || return 1
-        # Remove dependency annotation from command
         cmd="${cmd%% \[depends:*\]}"
     fi
-
     while [[ "$cmd" =~ \<\<([^:>]+)(:[^>]*)?\>\> ]]; do
         local p="${BASH_REMATCH[1]}"
         local rest="${BASH_REMATCH[2]}" 
@@ -2133,42 +1721,30 @@ execute_task() {
             echo -e "\n${COLOR_INFO}$(msg input_for)${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
         fi
     done
-    
     set +u; echo -e "${COLOR_DIM}> $cmd ${args[*]:-}${COLOR_RESET}\n"; set -u
     save_state
-    
     if [ "$dry_run_mode" -eq 1 ]; then
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
         echo -e "${COLOR_DIM}(No actual execution)${COLOR_RESET}\n"
         echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
         return 0
     fi
-    
-    # Measure execution time
     local start_time
-    # Record terminal state before running task
     start_time=$(date +%s)
     :
-    
-    # Execute with timeout
     local exit_status=0
     local log_file
     log_file=$(create_log_file "$name")
     local temp_output=""
     temp_output=$(mktemp)
     trap '[[ -n "${temp_output:-}" ]] && rm -f "$temp_output"' RETURN
-    
-    # dirname einmal cachen – vermeidet wiederholte Subshell-Aufrufe
     local config_dir
     config_dir=$(dirname "$config_path")
-    # Ersten Token prüfen (Schutz vor kaputten Kommandos)
     local first_token="${cmd%% *}"
     if [ -n "$first_token" ] && ! command -v "$first_token" >/dev/null 2>&1 && [[ "$first_token" != */* ]]; then
         echo -e "\n${COLOR_ERR}Invalid task command: '$first_token' — skipping execution.${COLOR_RESET}"
         exit_status=127
     else
-        # Script-String einmal definieren – shared zwischen timeout- und fallback-Pfad
-        # shellcheck disable=SC2016
         local _exec_script='
             [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
             [ -f ".env" ] && set -a && source .env && set +a
@@ -2194,19 +1770,15 @@ execute_task() {
             exit_status=$?
         fi
     fi
-    
-    # Ausgabe verarbeiten: Log-FD einmal öffnen statt pro Zeile open/write/close
     exec 3>>"$log_file"
     while IFS= read -r line; do
         process_progress_output "$line"
         printf '%s\n' "$line" >&3
     done < "$temp_output"
     exec 3>&-
-    
     local end_time
     end_time=$(date +%s)
     task_execution_time=$((end_time - start_time))
-    
     if [ "$exit_status" -eq 0 ] || [ "$exit_status" -eq 124 ]; then
         if [ "$exit_status" -eq 124 ]; then
             echo -e "\n${COLOR_ERR}$(msg task_failed) (timeout).${COLOR_RESET}"
@@ -2216,35 +1788,16 @@ execute_task() {
     else
         echo -e "\n${COLOR_ERR}$(msg task_failed) (exit $exit_status).${COLOR_RESET}"
     fi
-    
-    # Show execution time
     echo -e "${COLOR_DIM}⏱ ${task_execution_time}s${COLOR_RESET}"
-    
-    # Log to history
     add_to_history "$name" "$exit_status" "$task_execution_time"
-
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
-    
-    # Reset terminal state to clean state after task execution
-    # This prevents issues with arrow keys and terminal modes.
-    # Immediately re-disable echo after sane so arrow keys pressed between the
-    # log line and "Taste drücken..." are not echoed as [A / [B garbage.
     stty sane 2>/dev/null || true
     stty -echo 2>/dev/null || true
     tput cnorm 2>/dev/null || true
-    # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
-    # typed during/after task execution) before the "press key" prompt.
     drain_stdin
-    
-    # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
 }
-
-# ==============================================================================
-#  UTILITY HELPERS
-# ==============================================================================
-
 load_global_vars() {
     if [ ! -f "$RUN_VARS_FILE" ]; then
         return 0
@@ -2260,7 +1813,6 @@ load_global_vars() {
         fi
     done < "$RUN_VARS_FILE"
 }
-
 load_task_vars() {
     set +e +o pipefail  # Disable errexit and pipefail for regex operations
     if [ ! -f "$config_path" ]; then
@@ -2275,7 +1827,6 @@ load_task_vars() {
     done < "$config_path"
     set -e -o pipefail  # Re-enable errexit and pipefail
 }
-
 expand_env_vars() {
     local text="$1"
     local out="$text"
@@ -2290,10 +1841,8 @@ expand_env_vars() {
         guard=$((guard + 1))
         [ "$guard" -gt 50 ] && break
     done
-    echo "$out"
+    printf '%s\n' "$out"
 }
-
-
 create_log_file() {
     local task_name="$1"
     mkdir -p "$RUN_LOG_DIR" 2>/dev/null || true
@@ -2302,11 +1851,7 @@ create_log_file() {
     [ -z "$safe_name" ] && safe_name="task"
     echo "$RUN_LOG_DIR/$(date '+%Y-%m-%d_%H-%M-%S')_${safe_name}.log"
 }
-
-
 extract_field_from_grep() {
-    # Extract field from grep result
-    # Usage: extract_field_from_grep "^TIMEOUT=" "=" 2
     local pattern="$1"
     local delimiter="$2"
     local field_idx="$3"
@@ -2314,20 +1859,11 @@ extract_field_from_grep() {
         awk -F"$delimiter" -v pat="$pattern" -v idx="$field_idx" '$0 ~ pat {val=$idx; gsub(/^[ \t]+|[ \t]+$/, "", val); print val; exit}' "$config_path" 2>/dev/null || true
     fi
 }
-
-# ==============================================================================
-#  UI RENDERING & KEYBOARD INPUT HANDLING
-# ==============================================================================
-
-# Terminal capabilities are initialized in 03-terminal.sh via init_terminal_capabilities
-
-# Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
     local cols=1
     local rows="$total"
     local term_width="${TPUT_COLS:-80}"
-
     if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
         cols=3
         rows=$(( (total + cols - 1) / cols ))
@@ -2335,21 +1871,17 @@ calculate_layout() {
         cols=2
         rows=$(( (total + cols - 1) / cols ))
     fi
-
     [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
     [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
-
     _layout_rows=$rows
     _layout_cols=$cols
 }
-
 show_help_panel() {
     clear
     cat << EOF
 ${COLOR_HEAD}════════════════════════════════════════════════════════════════${COLOR_RESET}
 ${COLOR_HEAD}║                    SHELL MENU RUNNER v${VERSION}                 ║${COLOR_RESET}
 ${COLOR_HEAD}════════════════════════════════════════════════════════════════${COLOR_RESET}
-
 ${COLOR_SEL}Navigation:${COLOR_RESET}
   ↑/↓ or j/k      Navigate tasks
   ←/→ or h/l      Multi-column navigation
@@ -2357,10 +1889,8 @@ ${COLOR_SEL}Navigation:${COLOR_RESET}
   [1-9]           Quick execute (hotkey)
   [Space]         Multi-select (execute multiple)
   [ESC] or q      Exit / Go back
-
 ${COLOR_SEL}Features:${COLOR_RESET}
   /               Search/filter tasks
-  #               Filter by tags
   g               Toggle local/global config
   p               Switch profile
   s               Settings menu
@@ -2371,19 +1901,15 @@ ${COLOR_SEL}Features:${COLOR_RESET}
   !               Show history
   a               Alias editor
   ?               This help
-
 ${COLOR_SEL}Profiles:${COLOR_RESET}
   run [profile]   Load specific profile
   run --list      List all profiles
   run --init      Initialize new .tasks config
-
 ${COLOR_DIM}Press any key to continue...${COLOR_RESET}
 EOF
     consume_keypress
 }
-
 get_menu_options() {
-    # Cache check for performance
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -n "$cached_menu_options" ]; then
         if [ -f "$config_path" ]; then
             local current_mtime
@@ -2394,27 +1920,19 @@ get_menu_options() {
             fi
         fi
     fi
-    
-    # Build menu options
     local level_str=""
     local search_pattern=""
     local tag_pattern=""
-    
     if [ "$current_level" -gt 0 ]; then
         level_str="${history_name_stack[$current_level]}"
     fi
-    
     if [ -n "$filter_query" ]; then
-        # tr mit here-string: kein echo-Subshell-Pipe
         search_pattern=$(tr '[:upper:]' '[:lower:]' <<< "$filter_query")
     fi
-    
     if [ -n "$tag_filter" ]; then
         tag_pattern="$tag_filter"
     fi
-    
     local result=""
-    # Process substitution: Config-Inhalt direkt streamen — kein all_output-String-Kopie im Speicher
     while IFS= read -r line || [ -n "$line" ]; do
         [ -z "$line" ] && continue
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -2422,11 +1940,8 @@ get_menu_options() {
         [[ "$line" =~ ^VAR_ ]] && continue
         [[ "$line" =~ ^THEME: ]] && continue
         [[ "$line" =~ ^TITLE: ]] && continue
-
         IFS='|' read -r level name cmd desc <<< "$line"
         [ -z "$name" ] && continue
-
-        # Level filtering
         if [ "$current_level" -eq 0 ]; then
             [ "$level" != "0" ] && continue
         else
@@ -2435,21 +1950,14 @@ get_menu_options() {
                 continue
             fi
         fi
-
-        # Search filtering
         if [ -n "$search_pattern" ]; then
             local search_text
-            # here-string statt echo|tr: spart einen Subshell-Pipe-Prozess pro Zeile
             search_text=$(tr '[:upper:]' '[:lower:]' <<< "$name $desc")
             [[ ! "$search_text" =~ $search_pattern ]] && continue
         fi
-
-        # Tag filtering
         if [ -n "$tag_pattern" ]; then
             has_tag "$desc" "$tag_pattern" || continue
         fi
-
-        # Append to result buffer (do not echo here to avoid recursion)
         result+="${level}|${name}|${cmd}|${desc}"$'\n'
     done < <(
         if [ "${#task_config_files[@]}" -gt 0 ]; then
@@ -2458,37 +1966,26 @@ get_menu_options() {
             cat "$config_path"
         fi
     )
-
-    # Cache result (store the constructed string, avoid calling get_menu_options again)
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ] && [ -f "$config_path" ]; then
         cached_menu_options="$result"
         last_config_mtime=$(get_file_mtime "$config_path")
     fi
-
-    # Emit result
     printf "%s" "$result"
 }
-
 draw_menu() {
-    # Optimization: Use tput to move cursor instead of clearing screen (reduces flicker)
-    # macOS/BSD tput generally supports 'cup' and 'ed' (clear to end of screen)
     if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_CUP" ]; then
         echo -ne "$TPUT_CUP"
     else
         clear
     fi
     hide_cursor
-    
-    # Header
     local mode_indicator="[${active_mode}]"
     local profile_name=""
     if [ "$active_mode" = "global" ] && [ -f "$config_path" ]; then
         profile_name=$(basename "$config_path" .tasks)
         [ "$profile_name" != ".tasks" ] && mode_indicator="[${profile_name}]"
     fi
-    
     echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
-    
     if [ "$current_level" -gt 0 ]; then
         local breadcrumb=""
         for bname in "${history_name_stack[@]}"; do
@@ -2496,78 +1993,52 @@ draw_menu() {
         done
         echo -e "${COLOR_DIM}${breadcrumb%> }${COLOR_RESET}"
     fi
-    
     if [ -n "$filter_query" ]; then
         echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
     fi
-    
     if [ -n "$tag_filter" ]; then
         echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
     fi
-    
     echo ""
-    
-    # Menu grid
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
         echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}"
         return
     fi
-    
     calculate_layout "$total"
     local rows=$_layout_rows cols=$_layout_cols
-
     for ((r=0; r<rows; r++)); do
         for ((c=0; c<cols; c++)); do
             local idx=$((r + c * rows))
             [ "$idx" -ge "$total" ] && continue
-            
             IFS='|' read -r level name cmd desc <<< "${menu_options[$idx]}"
-            
             local marker="  "
             local color="$COLOR_RESET"
-            
             if [ "$idx" -eq "$selected_index" ]; then
                 marker="► "
                 color="$COLOR_SEL"
             fi
-            
             if [ -n "${multi_select_map[$idx]:-}" ]; then
                 marker="☑ "
             fi
-            
-            # Truncate long names
             local max_len=35
             if [ "${#name}" -gt "$max_len" ]; then
                 name="${name:0:$((max_len-3))}..."
             fi
-            
             printf "%s%s%-${max_len}s%s  " "$color" "$marker" "$name" "$COLOR_RESET"
         done
         echo ""
     done
-    
     echo ""
     echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi-Select | [?] Help${COLOR_RESET}"
-    
-    # Optimization: Clear remaining lines to ensure old menu items are removed
     if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ]; then
         echo -ne "$TPUT_ED"
     fi
 }
-
-# ==============================================================================
-#  MAIN INTERACTIVE LOOP WITH KEYBOARD HANDLING
-# ==============================================================================
-
-# Lädt menu_options neu und aktualisiert calculate_layout.
 _reload_menu() {
     IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
     calculate_layout "${#menu_options[@]}"
 }
-
-# Lädt Konfiguration + Menü neu — ersetzt das 5-Funktionen-Pattern
-# parse_config_vars+load_settings+load_state+detect_config_files+load_aliases.
 _reinit_menu() {
     parse_config_vars
     load_settings
@@ -2576,10 +2047,6 @@ _reinit_menu() {
     load_aliases
     _reload_menu
 }
-
-# Führt "$@" mit wiederhergestellten Terminal-Einstellungen aus und schaltet
-# danach wieder in den Raw-Mode. Ersetzt das 15× vorhandene
-# restore_term; <call>; [ is_interactive ] && stty ... -Pattern.
 run_with_term_paused() {
     restore_term
     "$@"
@@ -2588,52 +2055,32 @@ run_with_term_paused() {
         drain_stdin  # flush any escape sequence tails from the secondary screen
     fi
 }
-
 main_interactive_loop() {
-    # Disable strict error checking for the interactive loop to prevent
-    # accidental exits during navigation (arithmetic 0 results, etc.)
     set +e
-
-    # Initialize
     _reload_menu
     local num=${#menu_options[@]}
     local rows=$_layout_rows cols=$_layout_cols
     local redraw_needed=1
-    
-    # OPTIMIZATION: Set raw mode once to avoid stty overhead
     local old_stty=""
     restore_term() {
         [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
     }
-    
     if [ "$is_interactive" -eq 1 ]; then
         old_stty=$(stty -g 2>/dev/null)
         set_raw_mode
         trap 'restore_term; cleanup_wrapper; exit 130' INT TERM
     fi
-
     while true; do
-        # Only redraw if needed (performance optimization)
         if [ "$redraw_needed" -eq 1 ]; then
             draw_menu
             redraw_needed=0
         fi
-        
-        # ══════════════════════════════════════════════════════════════
-        #  KEYBOARD INPUT HANDLING
-        # ══════════════════════════════════════════════════════════════
         local key=""
         if [ "$is_interactive" -eq 1 ]; then
-            # Optimized read without repeatedly calling stty
             key=$(read_key_raw) || key=""
         else
-            # Non-interactive: read line (for SSH without TTY)
             read -r key || break
         fi
-        
-        # ══════════════════════════════════════════════════════════════
-        #  KEY HANDLING
-        # ══════════════════════════════════════════════════════════════
         case "$key" in
             $'\x1b[A'|$'\x1bOA') selected_index=$((selected_index - 1)); redraw_needed=1;; # Arrow Up
             $'\x1b[B'|$'\x1bOB') selected_index=$((selected_index + 1)); redraw_needed=1;; # Arrow Down
@@ -2713,8 +2160,6 @@ main_interactive_loop() {
             $'\r'|$'\n'|"") # ENTER key (BUG-FIX: Accept both \r and \n)
                 set +u
                 [ ${#menu_options[@]} -eq 0 ] && { set -u; continue; }
-                
-                # Multi-select execution
                 if [ ${#multi_select_map[@]} -gt 0 ]; then
                     set -u
                     restore_term
@@ -2734,8 +2179,6 @@ main_interactive_loop() {
                     continue
                 fi
                 set -u
-                
-                # Single execution
                 IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
                 if [ "$cmd" == "EXIT" ]; then
                     restore_term; clear; exit 0
@@ -2765,7 +2208,6 @@ main_interactive_loop() {
                 _reload_menu; num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                 redraw_needed=1;;
             "*") # Toggle favorite
-                # Internal operation, no restore needed
                 if [ "$selected_index" -lt "$num" ]; then
                     IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
                     toggle_favorite "$name"
@@ -2774,20 +2216,12 @@ main_interactive_loop() {
             "r"|"R") run_with_term_paused show_favorites; redraw_needed=1;;
             "q"|"Q") restore_term; clear; exit 0;;
         esac
-        
-        # Wrap around selection index
         local cnt=${#menu_options[@]}
         [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1))
         [ "$selected_index" -ge "$cnt" ] && selected_index=0
     done
 }
-
-# ==============================================================================
-#  CONTEXT MENU
-# ==============================================================================
-
 context_menu() {
-    # menu_options ist global stets aktuell — kein erneuter get_menu_options-Aufruf nötig
     local num=${#menu_options[@]}
     [ "$num" -eq 0 ] && return
     [ "$selected_index" -ge "$num" ] && return
@@ -2797,8 +2231,6 @@ context_menu() {
         sleep 1
         return
     fi
-    
-    # Show context menu with available actions
     clear
     echo -e "${COLOR_HEAD}Context Menu: ${name}${COLOR_RESET}"
     echo -e "${COLOR_DIM}${desc}${COLOR_RESET}"
@@ -2809,29 +2241,20 @@ context_menu() {
     echo "0) Cancel"
     echo ""
     read -rsn1 choice
-    
     case "$choice" in
         1) copy_to_clipboard "$name" ;;
         2) copy_to_clipboard "$cmd" ;;
         3) copy_to_clipboard "$desc" ;;
     esac
 }
-
-# ==============================================================================
-#  FILE BROWSER
-# ==============================================================================
-
 file_browser() {
     while true; do
         clear
         echo -e "${COLOR_HEAD}File Browser${COLOR_RESET}"
         echo -e "${COLOR_DIM}Current directory: $PWD${COLOR_RESET}"
         echo ""
-        
-        # Priority files
         local -a priority_files=(".tasks" ".env" "README.md" "package.json" "docker-compose.yml")
         local found_priority=0
-        
         echo -e "${COLOR_INFO}Priority Files:${COLOR_RESET}"
         for pf in "${priority_files[@]}"; do
             if [ -f "$pf" ]; then
@@ -2839,9 +2262,7 @@ file_browser() {
                 found_priority=1
             fi
         done
-        
         [ "$found_priority" -eq 0 ] && echo -e "${COLOR_DIM}  (none)${COLOR_RESET}"
-        
         echo ""
         echo "1) Create new file"
         echo "2) Edit .tasks"
@@ -2850,38 +2271,32 @@ file_browser() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
         case "$choice" in
             "1")
                 clear
                 echo -e "${COLOR_HEAD}Create New File${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Enter filename:${COLOR_RESET}"
                 read -r filename
-                
                 if [ -z "$filename" ]; then
                     echo -e "${COLOR_ERR}Filename cannot be empty!${COLOR_RESET}"
                     sleep 1
                     continue
                 fi
-                
                 if ! validate_filename "$filename"; then
                     echo -e "${COLOR_ERR}Invalid filename!${COLOR_RESET}"
                     sleep 1
                     continue
                 fi
-                
                 local filepath="$PWD/$filename"
                 if [ -f "$filepath" ]; then
                     echo -e "${COLOR_ERR}File already exists!${COLOR_RESET}"
                     sleep 2
                     continue
                 fi
-                
                 echo -e "${COLOR_INFO}Choose creation method:${COLOR_RESET}"
                 echo "1) Open in editor"
                 echo "2) Paste content"
                 method=$(read_key) || continue
-                
                 case "$method" in
                     "1")
                         ${EDITOR:-nano} "$filepath"
@@ -2942,14 +2357,8 @@ file_browser() {
         esac
     done
 }
-
-# ==============================================================================
-#  CONFIG EDITOR
-# ==============================================================================
-
 edit_config_menu() {
     local file="${1:-$config_path}"
-    
     while true; do
         clear
         echo -e "${COLOR_HEAD}Config Editor${COLOR_RESET}"
@@ -2961,11 +2370,9 @@ edit_config_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$file"
-                # Restore clean terminal state after editor exit
                 stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                 ;;
             "2")
@@ -2973,13 +2380,9 @@ edit_config_menu() {
                 echo -e "${COLOR_HEAD}Replace File Content${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Paste your content below, then press Ctrl+D (or Ctrl+Z on Windows)${COLOR_RESET}"
                 echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-                
-                # Create temp file
                 local tmp_file
                 tmp_file=$(mktemp)
                 cat > "$tmp_file"
-                
-                # Show preview
                 echo ""
                 echo -e "${COLOR_WARN}Preview (first 10 lines):${COLOR_RESET}"
                 head -10 "$tmp_file"
@@ -3011,40 +2414,30 @@ edit_config_menu() {
         esac
     done
 }
-
 show_alias_editor() {
     clear
     echo -e "${COLOR_HEAD}Alias Manager${COLOR_RESET}"
-    
     if [ ! -f "$ALIAS_FILE" ] || [ ! -s "$ALIAS_FILE" ]; then
         echo -e "${COLOR_DIM}No aliases defined yet.${COLOR_RESET}"
         echo -e "${COLOR_INFO}Create alias file? [y/N]${COLOR_RESET}"
         REPLY=$(read_key) || REPLY=""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             cat > "$ALIAS_FILE" << 'EOF'
-# Task Aliases
-# Format: alias_name=actual_task_name
-# Example:
-# build=npm run build
-# test=npm test
 EOF
             ${EDITOR:-nano} "$ALIAS_FILE"
-            # Restore clean terminal state after editor exit
             stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
-        grep -v "^#" "$ALIAS_FILE" | grep -v "^$" || true
+        grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
         echo ""
         echo "1) Edit aliases"
         echo "2) Add new alias"
         echo "0) Back"
         choice=$(read_key) || return
-        
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$ALIAS_FILE"
-                # Restore clean terminal state after editor exit
                 stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
                 ;;
             "2")
@@ -3058,22 +2451,17 @@ EOF
                 ;;
         esac
     fi
-    
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
-
 load_aliases() {
-    # Create alias file if not exists
     if [ ! -f "$ALIAS_FILE" ]; then
         touch "$ALIAS_FILE"
     fi
 }
-
 resolve_alias() {
     local input="$1"
     if [ -f "$ALIAS_FILE" ]; then
-        # awk for exact match – safe with special chars, no grep regex risks, no cut fork
         local resolved
         resolved=$(awk -F'=' -v a="$input" '$1 == a { print $2; exit }' "$ALIAS_FILE" 2>/dev/null || true)
         if [ -n "$resolved" ]; then
@@ -3083,7 +2471,6 @@ resolve_alias() {
     fi
     echo "$input"
 }
-
 settings_menu() {
     while true; do
         clear
@@ -3102,7 +2489,6 @@ settings_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
         case "$choice" in
             "1")
                 echo -e "\n${COLOR_INFO}Select Theme:${COLOR_RESET}"
@@ -3153,11 +2539,6 @@ settings_menu() {
         esac
     done
 }
-
-# ==============================================================================
-#  SELF-UPDATE
-# ==============================================================================
-
 self_update() {
     echo -e "${COLOR_HEAD}$(msg update_check)${COLOR_RESET}"
     if ! command -v curl >/dev/null 2>&1; then
@@ -3215,40 +2596,28 @@ self_update() {
         rm -f "$tmp_file"
     fi
 }
-
-# ==============================================================================
-#  SMART INIT (AUTO-DETECTION)
-# ==============================================================================
-
 smart_init() {
     local mode="$1"
     local target="$LOCAL_CONFIG"; [ "$mode" == "global" ] && target="$GLOBAL_CONFIG"
-    
     if [ -f "$target" ]; then
         echo -e "${COLOR_WARN}$(msg config_exists) '$target'.${COLOR_RESET}"
         return 1
     fi
-
     echo -e "${COLOR_HEAD}$(msg init_header)${COLOR_RESET}"
     echo "# Shell Menu Runner Configuration" > "$target"
     echo "# THEME: CYBER" >> "$target"
     echo "" >> "$target"
-
     if [ "$mode" == "global" ]; then
         echo "0|🔄 System Update|sudo apt update && sudo apt upgrade -y|Systempflege" >> "$target"
         echo "0|🧹 Cache Cleanup|rm -rf /tmp/*|Temporäre Dateien löschen" >> "$target"
     else
         local target_dir
         target_dir="$(dirname "$target")"
-
-        # Git profile tasks (separate menu via: run git)
         if [ -d "$target_dir/.git" ]; then
             local git_tasks_file="$target_dir/.tasks.git"
             if [ ! -f "$git_tasks_file" ]; then
                 echo -e "${COLOR_INFO}→ Git repo detected. Creating .tasks.git...${COLOR_RESET}"
                 cat > "$git_tasks_file" <<'EOF'
-# Shell Menu Runner Git Tasks
-# TITLE: GIT
 0|📌 Status|git status -sb|Working tree status
 0|🧭 Branches|git branch -a|List branches
 0|🧾 Log (short)|git log --oneline --decorate -n 20|Recent commits
@@ -3263,15 +2632,11 @@ smart_init() {
 EOF
             fi
         fi
-
-        # Docker profile tasks (separate menu via: run docker)
         if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then
             local docker_tasks_file="$target_dir/.tasks.docker"
             if [ ! -f "$docker_tasks_file" ]; then
                 echo -e "${COLOR_INFO}→ Docker Compose detected. Creating .tasks.docker...${COLOR_RESET}"
                 cat > "$docker_tasks_file" <<'EOF'
-# Shell Menu Runner Docker Tasks
-# TITLE: DOCKER
 0|🐳 Up|docker compose up -d|Start containers
 0|🐳 Down|docker compose down|Stop containers
 0|🐳 Logs|docker compose logs -f --tail=200|Follow logs
@@ -3281,8 +2646,6 @@ EOF
 EOF
             fi
         fi
-
-        # 1. Node.js / React Detection
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ $(msg node_detected)${COLOR_RESET}"
             local scripts
@@ -3290,7 +2653,6 @@ EOF
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done
-
             if [ -f "pnpm-lock.yaml" ]; then
                 echo "0|📦 pnpm install|pnpm install|Install dependencies" >> "$target"
             fi
@@ -3298,21 +2660,16 @@ EOF
                 echo "0|📦 bun install|bun install|Install dependencies" >> "$target"
             fi
         fi
-
-        # 2. Docker Detection
         if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then
             echo -e "${COLOR_INFO}→ $(msg docker_detected)${COLOR_RESET}"
             echo "0|🐳 Docker Up|docker compose up -d|Container starten" >> "$target"
             echo "0|🐳 Docker Down|docker compose down|Container stoppen" >> "$target"
         fi
-
-        # 3. Python Detection
         if [ -f "requirements.txt" ] || [ -f "main.py" ] || [ -f "manage.py" ]; then
             echo -e "${COLOR_INFO}→ $(msg python_detected)${COLOR_RESET}"
             [ -f "manage.py" ] && echo "0|🐍 Django Run|python3 manage.py runserver|Django Dev Server" >> "$target"
             [ -f "main.py" ] && echo "0|🐍 Run Main|python3 main.py|Python Script starten" >> "$target"
         fi
-
         if [ -f "pyproject.toml" ] || [ -f "poetry.lock" ]; then
             echo "0|🐍 Poetry Install|poetry install|Install dependencies" >> "$target"
             echo "0|🐍 Poetry Shell|poetry shell|Enter virtualenv" >> "$target"
@@ -3321,14 +2678,10 @@ EOF
             echo "0|🐍 Pipenv Install|pipenv install|Install dependencies" >> "$target"
             echo "0|🐍 Pipenv Shell|pipenv shell|Enter virtualenv" >> "$target"
         fi
-
-        # 4. Makefile Detection
         if [ -f "Makefile" ] || [ -f "makefile" ]; then
             echo "0|🛠 Make|make|Default target" >> "$target"
             echo "0|🛠 Make Test|make test|Run tests" >> "$target"
         fi
-
-        # 5. Go Detection
         if [ -f "go.mod" ]; then
             {
                 echo "0|🐹 Go Build|go build ./...|Build modules"
@@ -3336,8 +2689,6 @@ EOF
                 echo "0|🐹 Go Run|go run .|Run module"
             } >> "$target"
         fi
-
-        # 6. Rust Detection
         if [ -f "Cargo.toml" ]; then
             {
                 echo "0|🦀 Cargo Build|cargo build|Build project"
@@ -3345,8 +2696,6 @@ EOF
                 echo "0|🦀 Cargo Run|cargo run|Run project"
             } >> "$target"
         fi
-
-        # 7. Java Detection
         if [ -f "pom.xml" ]; then
             echo "0|☕ Maven Test|mvn test|Run tests" >> "$target"
             echo "0|☕ Maven Package|mvn package|Build package" >> "$target"
@@ -3355,40 +2704,25 @@ EOF
             echo "0|☕ Gradle Test|./gradlew test|Run tests" >> "$target"
             echo "0|☕ Gradle Build|./gradlew build|Build project" >> "$target"
         fi
-
-        # 8. PHP Detection
         if [ -f "composer.json" ]; then
             echo "0|🐘 Composer Install|composer install|Install dependencies" >> "$target"
             echo "0|🐘 PHP Server|php -S localhost:8000 -t public|Dev server" >> "$target"
         fi
-
-        # 9. Ruby Detection
         if [ -f "Gemfile" ]; then
             echo "0|💎 Bundle Install|bundle install|Install gems" >> "$target"
             echo "0|💎 Rake Test|bundle exec rake test|Run tests" >> "$target"
         fi
-
-        # 10. Terraform Detection
         if compgen -G "*.tf" >/dev/null; then
             echo "0|🌍 Terraform Init|terraform init|Initialize" >> "$target"
             echo "0|🌍 Terraform Plan|terraform plan|Show plan" >> "$target"
         fi
-
-        # Fallback falls nichts gefunden wurde
         if [ "$(wc -l < "$target")" -lt 4 ]; then
             echo "0|🚀 Hello World|echo 'Edit .tasks to add commands'|Beispiel Task" >> "$target"
         fi
     fi
-
     echo "0|❌ Exit|EXIT|Menü beenden" >> "$target"
     echo -e "${COLOR_SEL}✔ $(msg init_done) '$target'.${COLOR_RESET}"
 }
-
-# ==============================================================================
-#  MAIN ENTRY POINT
-# ==============================================================================
-
-# Parse CLI arguments
 args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -3497,21 +2831,18 @@ else
     set --
 fi
 set -u  # Re-enable nounset
-
 if [ "${RUN_DEBUG:-0}" = "1" ]; then
     DEBUG_MODE=1
 fi
-
 if [ "$DEBUG_MODE" -eq 1 ]; then
     set -x
 fi
-
 set +u  # Disable nounset for array check
 if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
-        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         echo -e "${COLOR_DIM}Press [p] to choose a profile or any other key to continue...${COLOR_RESET}"
         key=$(read_key) || key=""
         sleep 0.1
@@ -3522,14 +2853,12 @@ if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
 else
     set -u  # Re-enable nounset if condition was false
 fi
-
 set +u  # Disable nounset for array check
 if [ "${#args[@]}" -gt 0 ]; then
     set -u  # Re-enable nounset
     load_aliases
     profile_input="${args[0]}"
     profile="$(resolve_alias "$profile_input")"
-
     if found=$(find_named_config "$profile"); then
         active_mode="local"
         config_path="$found"
@@ -3540,13 +2869,12 @@ if [ "${#args[@]}" -gt 0 ]; then
         echo -e "${COLOR_WARN}Profile '$profile' not found. Using default config.${COLOR_RESET}"
         profiles_list=$(list_available_profiles)
         if [ -n "$profiles_list" ]; then
-            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         fi
     fi
 else
     set -u  # Re-enable nounset if condition was false
 fi
-
 if [ -z "$config_path" ]; then
     if found=$(find_local_config); then 
         config_path="$found"
@@ -3554,23 +2882,18 @@ if [ -z "$config_path" ]; then
         active_mode="global"
         config_path="$GLOBAL_CONFIG"
     else
-        # Fallback: Load default global profile or show error
         echo -e "${COLOR_WARN}No .tasks file found.${COLOR_RESET}"
         exit 1
     fi
 fi
-
 parse_config_vars
 load_settings
 load_state
-# Ensure selected_index is initialized
 selected_index="${selected_index:-0}"
 detect_config_files
 load_aliases
 check_interactive
 check_ssh_session
-
-# If not interactive and SSH, show hint (only once)
 if [ "$is_interactive" -eq 0 ] && [ "$is_ssh_session" -eq 1 ] && [ "$ssh_hint_shown" -eq 0 ]; then
     echo ""
     print_ssh_hint
@@ -3579,13 +2902,8 @@ if [ "$is_interactive" -eq 0 ] && [ "$is_ssh_session" -eq 1 ] && [ "$ssh_hint_sh
     echo ""
     ssh_hint_shown=1
 fi
-
-# Load menu options once before loop
 IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
-
-# Main interactive loop is in 13-ui.sh
 main_interactive_loop
-
