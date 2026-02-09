@@ -1,0 +1,33 @@
+# Build Platform
+dist/
+.build-cache/
+.build-logs/
+
+# Test artifacts
+test-results/
+coverage/
+*.log
+
+# Package artifacts
+*.deb
+*.rpm
+*.tar.gz
+SHA256SUMS
+
+# Docker
+.dockerignore
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+/tmp/
+*.tmp

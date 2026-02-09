@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- Fixed menu parsing to read `LEVEL|NAME|CMD|DESC` correctly (EXIT/SUB/BACK work as expected).
+- Prevented strict-mode exits during settings resolution when values are empty.
+- Hardened keypress handling to avoid stray escape sequences after task execution.
+- Switched Docker templates to `docker compose` and documented compose file requirements.
+
 ## [1.7.0] - 2026-02-08
 
 ### Code Quality

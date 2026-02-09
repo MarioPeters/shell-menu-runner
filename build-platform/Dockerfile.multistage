@@ -1,0 +1,52 @@
+# ==============================================================================
+#  Shell Menu Runner - Multi-Stage Docker Build
+#  Production-optimized container with minimal size
+# ==============================================================================
+
+# Build stage
+FROM alpine:3.19 AS builder
+
+RUN apk add --no-cache bash
+
+WORKDIR /build
+
+# Copy source files
+COPY src/ ./src/
+COPY build.sh ./
+
+# Build production version
+RUN bash build.sh
+
+# Production stage
+FROM alpine:3.19
+
+LABEL maintainer="Mario Peters <mail@example.com>" \
+      version="1.7.0" \
+      description="Shell Menu Runner - Production Build" \
+      org.opencontainers.image.source="https://github.com/MarioPeters/shell-menu-runner"
+
+# Install runtime dependencies only
+RUN apk add --no-cache \
+    bash \
+    ncurses \
+    coreutils \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN addgroup -S runuser && adduser -S runuser -G runuser
+
+# Copy built script from builder
+COPY --from=builder /build/run.sh /usr/local/bin/run
+RUN chmod +x /usr/local/bin/run
+
+# Setup workspace
+RUN mkdir -p /workspace && chown runuser:runuser /workspace
+
+USER runuser
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/local/bin/run"]
+CMD ["--help"]
+
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD /usr/local/bin/run --version || exit 1

@@ -20,7 +20,7 @@ Version 1.7.0 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 **1) 🧠 Smart Project Detection (Smart Init)**
 
 - **Node.js / React:** Scans `package.json` and imports scripts as tasks.
-- **Docker:** Detects `docker-compose.yml` and offers `up` / `down` tasks.
+- **Docker:** Detects `compose.yml` or `docker-compose.yml` and offers `docker compose` tasks.
 - **Python:** Detects `manage.py` (Django) or `main.py` and creates run tasks.
 - **More stacks:** Go, Rust, Java (Maven/Gradle), PHP (Composer), Ruby (Bundler), Makefile, Poetry, Pipenv, pnpm, bun, Terraform.
 - **Git/Docker profiles:** In Git/Docker repos, creates `.tasks.git` and `.tasks.docker` (use `run git`, `run docker`).
@@ -402,7 +402,7 @@ Version 1.7.0 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 **1) 🧠 Intelligente Projekt-Erkennung (Smart Init)**
 
 - **Node.js / React:** Scannt die `package.json` und importiert Scripts als Tasks.
-- **Docker:** Erkennt `docker-compose.yml` und bietet `up` / `down` Tasks an.
+- **Docker:** Erkennt `compose.yml` oder `docker-compose.yml` und bietet `docker compose` Tasks an.
 - **Python:** Erkennt `manage.py` (Django) oder `main.py` und erstellt Start-Tasks.
 - **Weitere Stacks:** Go, Rust, Java (Maven/Gradle), PHP (Composer), Ruby (Bundler), Makefile, Poetry, Pipenv, pnpm, bun, Terraform.
 - **Git/Docker-Profile:** In Git/Docker-Repos werden `.tasks.git` und `.tasks.docker` angelegt (Aufruf: `run git`, `run docker`).

@@ -129,11 +129,11 @@ if [ ! -f "$HOME/.tasks.docker" ]; then
 	cat > "$HOME/.tasks.docker" <<'EOF'
 # Shell Menu Runner Docker Tasks
 # TITLE: DOCKER
-0|🐳 Up|docker-compose up -d|Start containers
-0|🐳 Down|docker-compose down|Stop containers
-0|🐳 Logs|docker-compose logs -f --tail=200|Follow logs
-0|🐳 Restart|docker-compose restart|Restart containers
-0|🐳 Ps|docker-compose ps|Show status
+0|🐳 Up|docker compose up -d|Start containers
+0|🐳 Down|docker compose down|Stop containers
+0|🐳 Logs|docker compose logs -f --tail=200|Follow logs
+0|🐳 Restart|docker compose restart|Restart containers
+0|🐳 Ps|docker compose ps|Show status
 0|❌ Exit|EXIT|Back
 EOF
 	echo -e "${GREEN}✔ ~/.tasks.docker created${NC}"
@@ -280,8 +280,8 @@ if [ ! -f "$HOME/.tasks.mailcow" ]; then
 0|📧 List Users|curl -H "X-API-Key: <<Key>>" https://<<Domain>>/api/v1/get/mailbox/all|List mailboxes
 0|🔐 Add User|curl -X POST -H "X-API-Key: <<Key>>" https://<<Domain>>/api/v1/add/mailbox|Add mailbox [!]
 0|💾 Backup|cd /opt/mailcow && sudo ./helper-scripts/backup_mailcow.sh|Create backup [!]
-0|🔄 Restart|cd /opt/mailcow && sudo docker-compose restart|Restart mailcow [!]
-0|📜 Logs|cd /opt/mailcow && sudo docker-compose logs -f|Follow logs
+0|🔄 Restart|cd /opt/mailcow && sudo docker compose restart|Restart mailcow [!]
+0|📜 Logs|cd /opt/mailcow && sudo docker compose logs -f|Follow logs
 0|❌ Exit|EXIT|Back
 EOF
 	echo -e "${GREEN}✔ ~/.tasks.mailcow created${NC}"

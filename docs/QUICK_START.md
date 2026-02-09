@@ -77,14 +77,14 @@ run
 ### First Commands to Try
 
 ```bash
-# Run task #1 without menu
-run 1
-
 # List all profiles
 run --list-profiles
 
 # Validate your .tasks file
 run --validate
+
+# Start a specific profile
+run dev
 ```
 
 ---
