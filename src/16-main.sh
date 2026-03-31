@@ -238,7 +238,13 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [--init|--analyze|--global|--edit|--update|--debug] [profile]"
+            echo "Usage: run [options] [profile]"
+            echo ""
+            echo "CLI Mode (no menu):"
+            echo "  run --list              List all tasks for current profile"
+            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run --dry-run --run <n> Preview command without executing"
+            echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
             echo "  run <name>              Load profile .tasks.<name>"
@@ -329,6 +335,24 @@ while [[ $# -gt 0 ]]; do
             edit_config_menu "$config_path"
             exit 0
             ;;
+        --run)
+            shift
+            cli_run_query="${1:-}"
+            if [ -z "$cli_run_query" ]; then
+                echo "Usage: --run <name-or-number>" >&2
+                exit 1
+            fi
+            cli_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run_mode=1
+            shift
+            ;;
+        --list)
+            cli_list_mode=1
+            shift
+            ;;
         *)
             args+=("$1")
             shift
@@ -352,7 +376,7 @@ if [ "$DEBUG_MODE" -eq 1 ]; then
 fi
 
 set +u  # Disable nounset for array check
-if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
+if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
@@ -433,6 +457,16 @@ IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
+
+# CLI mode dispatch — must come after menu_options is populated
+if [ "${cli_list_mode:-0}" -eq 1 ]; then
+    cli_list_tasks
+    exit 0
+fi
+if [ -n "${cli_run_query:-}" ]; then
+    cli_run_task "$cli_run_query"
+    exit $?
+fi
 
 # Main interactive loop is in 13-ui.sh
 main_interactive_loop

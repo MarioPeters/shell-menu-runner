@@ -30,6 +30,8 @@ run --validate [name]  # Validate profile syntax
 run --edit, -e         # Open config editor
 run --across p1,p2 task
                        # Execute task across multiple profiles
+run --list             # List all tasks non-interactively
+run --run <query>      # Execute task non-interactively (name, substring, or number)
 ```
 
 ---
@@ -49,6 +51,25 @@ run docker
 ```bash
 run --across auth,api,worker deploy
 ```
+
+### Non-Interactive CLI Mode
+
+```bash
+# List all available tasks (numbered)
+run --list
+
+# Execute by exact name
+run --run "Build Project"
+
+# Execute by number (from --list output)
+run --run 3
+
+# Execute by substring (disambiguates if multiple match)
+run --run build
+```
+
+If a substring matches multiple tasks, a disambiguation prompt is shown.
+Exit code reflects the executed task's exit code — suitable for CI/scripting.
 
 ---
 

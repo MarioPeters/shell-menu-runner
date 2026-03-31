@@ -83,6 +83,11 @@ ssh_hint_shown=0
 last_config_mtime=0
 cached_menu_options=""
 DEBUG_MODE=0
+# shellcheck disable=SC2034
+cli_mode=0          # 1 when --run is active; skips interactive prompts in execute_task
+# shellcheck disable=SC2034
+cli_run_query=""    # query string passed to --run
+cli_list_mode=0     # 1 when --list is active
 
 # --- SETTINGS STATE ---
 readonly DEFAULT_LANG="DE"
@@ -2227,10 +2232,11 @@ execute_tasks_parallel() {
 
 execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
-    dry_run_mode=0  # Reset dry-run flag
+    # dry_run_mode is set externally (--dry-run flag or future interactive 'd' key).
+    # Do NOT reset here — it is consumed and cleared inside the dry-run block below.
     
-    # Show preview if interactive
-    if [ "$is_interactive" -eq 1 ]; then
+    # Show preview if interactive and not in CLI mode
+    if [ "$is_interactive" -eq 1 ] && [ "${cli_mode:-0}" -eq 0 ]; then
         if ! preview_task "$cmd" "$name" "$desc"; then
             return  # User cancelled
         fi
@@ -2244,7 +2250,9 @@ execute_task() {
     if [ "$is_interactive" -eq 1 ]; then
         tput cnorm 2>/dev/null
     fi
-    clear 
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        clear
+    fi 
     echo -e "${COLOR_HEAD}$(msg executing)${COLOR_RESET} $name"
     
     if [[ "$desc" == "[!]"* ]]; then
@@ -2279,9 +2287,12 @@ execute_task() {
     save_state
     
     if [ "$dry_run_mode" -eq 1 ]; then
+        dry_run_mode=0  # Consume the flag — one-shot per execution
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
         echo -e "${COLOR_DIM}(No actual execution)${COLOR_RESET}\n"
-        echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        if [ "${cli_mode:-0}" -eq 0 ]; then
+            echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        fi
         return 0
     fi
     
@@ -2366,20 +2377,146 @@ execute_task() {
 
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
     
-    # Reset terminal state to clean state after task execution
-    # This prevents issues with arrow keys and terminal modes.
-    # Immediately re-disable echo after sane so arrow keys pressed between the
-    # log line and "Taste drücken..." are not echoed as [A / [B garbage.
-    stty sane 2>/dev/null || true
-    stty -echo 2>/dev/null || true
-    tput cnorm 2>/dev/null || true
-    # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
-    # typed during/after task execution) before the "press key" prompt.
-    drain_stdin
-    
     # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
-    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+
+    # Interactive cleanup and keypress prompt — skipped in CLI mode
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        # Reset terminal state to clean state after task execution
+        # This prevents issues with arrow keys and terminal modes.
+        # Immediately re-disable echo after sane so arrow keys pressed between the
+        # log line and "Taste drücken..." are not echoed as [A / [B garbage.
+        stty sane 2>/dev/null || true
+        stty -echo 2>/dev/null || true
+        tput cnorm 2>/dev/null || true
+        # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
+        # typed during/after task execution) before the "press key" prompt.
+        drain_stdin
+        echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+    fi
+    return "$exit_status"
+}
+
+# ==============================================================================
+#  CLI MODE (non-interactive --list / --run)
+# ==============================================================================
+
+# shellcheck disable=SC2034
+_cli_matches=()   # populated by cli_match_tasks(); array of matching indices
+
+cli_match_tasks() {
+    local query="$1"
+    _cli_matches=()
+    local total=${#menu_options[@]}
+
+    # Numeric query: direct 1-based index lookup
+    if [[ "$query" =~ ^[0-9]+$ ]]; then
+        local idx=$(( query - 1 ))
+        if [ "$idx" -lt 0 ] || [ "$idx" -ge "$total" ]; then
+            echo "Task number $query out of range (1–$total)" >&2
+            return 1
+        fi
+        _cli_matches=("$idx")
+        return 0
+    fi
+
+    local query_lower i _lvl _name _cmd _desc name_lower
+    query_lower=$(tr '[:upper:]' '[:lower:]' <<< "$query")
+
+    # Pass 1: exact name match (case-insensitive full string)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [ "$name_lower" = "$query_lower" ] && _cli_matches+=("$i")
+    done
+    [ "${#_cli_matches[@]}" -gt 0 ] && return 0
+
+    # Pass 2: substring match (case-insensitive)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [[ "$name_lower" == *"$query_lower"* ]] && _cli_matches+=("$i")
+    done
+
+    if [ "${#_cli_matches[@]}" -eq 0 ]; then
+        echo "No task found matching '$query'" >&2
+        return 1
+    fi
+    return 0
+}
+
+cli_run_task() {
+    local query="$1"
+    local total=${#menu_options[@]}
+
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found." >&2
+        return 1
+    fi
+
+    if ! cli_match_tasks "$query"; then
+        return 1
+    fi
+
+    local match_count=${#_cli_matches[@]}
+    local chosen_idx=""
+
+    if [ "$match_count" -eq 1 ]; then
+        chosen_idx="${_cli_matches[0]}"
+    else
+        # Disambiguation: print matches, read single keypress
+        echo "Multiple matches for \"$query\":"
+        local j _lvl _name _cmd _desc
+        for (( j=0; j<match_count; j++ )); do
+            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[${_cli_matches[$j]}]}"
+            printf "  %d)  %s\n" "$(( j + 1 ))" "$_name"
+        done
+        echo ""
+        printf "Select [1-%d] or q to cancel: " "$match_count"
+
+        local key
+        while true; do
+            stty -icanon min 1 time 0 2>/dev/null
+            key=$(dd bs=1 count=1 2>/dev/null)
+            stty sane 2>/dev/null || true
+            case "$key" in
+                q|Q|$'\x1b')
+                    echo ""
+                    echo "Cancelled."
+                    return 0
+                    ;;
+                [1-9])
+                    local sel
+                    sel=$(( key - 1 ))
+                    if [ "$sel" -lt "$match_count" ]; then
+                        echo "$key"
+                        chosen_idx="${_cli_matches[$sel]}"
+                        break
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    local _lvl _name _cmd _desc
+    IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$chosen_idx]}"
+    execute_task "$_cmd" "$_name" "$_desc"
+    return $?
+}
+
+cli_list_tasks() {
+    local total=${#menu_options[@]}
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found."
+        return 0
+    fi
+    echo "Tasks ($total)"
+    local i _lvl _name _cmd _desc
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        local num=$(( i + 1 ))
+        printf "  %2d)  %-22s  %s\n" "$num" "${_name:0:22}" "$_desc"
+    done
 }
 
 # ==============================================================================
@@ -2716,7 +2853,9 @@ draw_menu() {
 
             # Truncate name to fit
             if [ "${#_name}" -gt "$name_max" ]; then
-                _name="${_name:0:$((name_max-3))}..."
+                local _trunc=$(( name_max - 3 ))
+                [ "$_trunc" -lt 1 ] && _trunc=1
+                _name="${_name:0:$_trunc}..."
             fi
             # Pad name to name_max chars — printf -v avoids subshell
             local _padded
@@ -3583,7 +3722,13 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [--init|--analyze|--global|--edit|--update|--debug] [profile]"
+            echo "Usage: run [options] [profile]"
+            echo ""
+            echo "CLI Mode (no menu):"
+            echo "  run --list              List all tasks for current profile"
+            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run --dry-run --run <n> Preview command without executing"
+            echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
             echo "  run <name>              Load profile .tasks.<name>"
@@ -3674,6 +3819,24 @@ while [[ $# -gt 0 ]]; do
             edit_config_menu "$config_path"
             exit 0
             ;;
+        --run)
+            shift
+            cli_run_query="${1:-}"
+            if [ -z "$cli_run_query" ]; then
+                echo "Usage: --run <name-or-number>" >&2
+                exit 1
+            fi
+            cli_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run_mode=1
+            shift
+            ;;
+        --list)
+            cli_list_mode=1
+            shift
+            ;;
         *)
             args+=("$1")
             shift
@@ -3697,7 +3860,7 @@ if [ "$DEBUG_MODE" -eq 1 ]; then
 fi
 
 set +u  # Disable nounset for array check
-if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
+if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
@@ -3778,6 +3941,16 @@ IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
+
+# CLI mode dispatch — must come after menu_options is populated
+if [ "${cli_list_mode:-0}" -eq 1 ]; then
+    cli_list_tasks
+    exit 0
+fi
+if [ -n "${cli_run_query:-}" ]; then
+    cli_run_task "$cli_run_query"
+    exit $?
+fi
 
 # Main interactive loop is in 13-ui.sh
 main_interactive_loop

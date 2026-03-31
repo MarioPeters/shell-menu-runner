@@ -60,7 +60,7 @@ set -euo pipefail
 # --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
 COLOR_WARN=$'\e[1;33m'; COLOR_INFO=$'\e[33m';  COLOR_DIM=$'\e[2m'
-COLOR_RESET=$'\e[0m'
+COLOR_RESET=$'\e[0m';   COLOR_BOLD=$'\e[0;1m'
 
 # --- GLOBAL STATE ---
 current_level=0
@@ -83,6 +83,11 @@ ssh_hint_shown=0
 last_config_mtime=0
 cached_menu_options=""
 DEBUG_MODE=1
+# shellcheck disable=SC2034
+cli_mode=0          # 1 when --run is active; skips interactive prompts in execute_task
+# shellcheck disable=SC2034
+cli_run_query=""    # query string passed to --run
+cli_list_mode=0     # 1 when --list is active
 
 # --- SETTINGS STATE ---
 readonly DEFAULT_LANG="DE"
@@ -360,6 +365,19 @@ validate_filename() {
 #  TERMINAL & SSH DETECTION
 # ==============================================================================
 
+# Context indicator — built once at init, read by draw_menu()
+_CTX_LINE=""
+_CTX_BRANCH=""
+_CTX_HOST=""
+_CTX_ENV=""
+_LAST_COL_WIDTH=0
+
+# Border string cache — rebuilt when col_width changes (WINCH trap resets _LAST_COL_WIDTH)
+# shellcheck disable=SC2034
+_BORDER_TOP=""
+# shellcheck disable=SC2034
+_BORDER_BOT=""
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
@@ -377,6 +395,67 @@ check_ssh_session() {
     else
         is_ssh_session=0
     fi
+}
+
+init_context() {
+    _CTX_LINE=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
+    local show="${CONTEXT_SHOW:-git,hostname,env}"
+    local parts=()
+
+    # Git branch — subprocess is acceptable at init (not in render loop)
+    if [[ "$show" == *"git"* ]]; then
+        _CTX_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        [ -n "$_CTX_BRANCH" ] && parts+=("${COLOR_INFO}⎇ ${_CTX_BRANCH}${COLOR_RESET}")
+    fi
+
+    # Hostname — only on SSH sessions
+    if [[ "$show" == *"hostname"* ]]; then
+        if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+            _CTX_HOST="${HOSTNAME:-$(hostname 2>/dev/null || true)}"
+            [ -n "$_CTX_HOST" ] && parts+=("${COLOR_ERR}⚡ ${_CTX_HOST}${COLOR_RESET}")
+        fi
+    fi
+
+    # Environment variable
+    if [[ "$show" == *"env"* ]]; then
+        _CTX_ENV="${APP_ENV:-${ENVIRONMENT:-${DEPLOY_ENV:-}}}"
+        if [ -n "$_CTX_ENV" ]; then
+            local env_lower env_upper env_color
+            env_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_CTX_ENV")
+            env_upper=$(tr '[:lower:]' '[:upper:]' <<< "$_CTX_ENV")
+            case "$env_lower" in
+                production|prod) env_color="$COLOR_ERR"  ;;
+                staging|stg)     env_color="$COLOR_WARN" ;;
+                development|dev) env_color="$COLOR_INFO" ;;
+                *)               env_color="$COLOR_DIM"  ;;
+            esac
+            parts+=("${env_color}${env_upper}${COLOR_RESET}")
+        fi
+    fi
+
+    # Join parts with " · " separator — pure Bash, no subshell
+    if [ "${#parts[@]}" -gt 0 ]; then
+        local line="${parts[0]}"
+        local i
+        for (( i=1; i<${#parts[@]}; i++ )); do
+            line+="${COLOR_DIM} · ${COLOR_RESET}${parts[$i]}"
+        done
+        _CTX_LINE="$line"
+    fi
+}
+
+build_border_strings() {
+    local col_width="$1"
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+
+    # Build dash string with pure Bash loop — no subshell, no seq
+    local dashes="" i
+    for (( i=0; i<inner; i++ )); do dashes+='─'; done
+
+    _BORDER_TOP="┌${dashes}┐"
+    _BORDER_BOT="└${dashes}┘"
+    _LAST_COL_WIDTH="$col_width"
 }
 
 # Optimized terminal capability caching
@@ -397,8 +476,11 @@ init_terminal_capabilities() {
         HAS_TPUT=0
         TPUT_COLS=80
     fi
-    # Update cols on resize
-    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80)' WINCH
+    # Update cols on resize, reset border cache
+    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); _LAST_COL_WIDTH=0' WINCH
+
+    # Context indicator (git branch, hostname, env)
+    init_context
 }
 
 consume_keypress() {
@@ -2150,10 +2232,11 @@ execute_tasks_parallel() {
 
 execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
-    dry_run_mode=0  # Reset dry-run flag
+    # dry_run_mode is set externally (--dry-run flag or future interactive 'd' key).
+    # Do NOT reset here — it is consumed and cleared inside the dry-run block below.
     
-    # Show preview if interactive
-    if [ "$is_interactive" -eq 1 ]; then
+    # Show preview if interactive and not in CLI mode
+    if [ "$is_interactive" -eq 1 ] && [ "${cli_mode:-0}" -eq 0 ]; then
         if ! preview_task "$cmd" "$name" "$desc"; then
             return  # User cancelled
         fi
@@ -2167,7 +2250,9 @@ execute_task() {
     if [ "$is_interactive" -eq 1 ]; then
         tput cnorm 2>/dev/null
     fi
-    clear 
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        clear
+    fi 
     echo -e "${COLOR_HEAD}$(msg executing)${COLOR_RESET} $name"
     
     if [[ "$desc" == "[!]"* ]]; then
@@ -2202,9 +2287,12 @@ execute_task() {
     save_state
     
     if [ "$dry_run_mode" -eq 1 ]; then
+        dry_run_mode=0  # Consume the flag — one-shot per execution
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
         echo -e "${COLOR_DIM}(No actual execution)${COLOR_RESET}\n"
-        echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        if [ "${cli_mode:-0}" -eq 0 ]; then
+            echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        fi
         return 0
     fi
     
@@ -2289,20 +2377,146 @@ execute_task() {
 
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
     
-    # Reset terminal state to clean state after task execution
-    # This prevents issues with arrow keys and terminal modes.
-    # Immediately re-disable echo after sane so arrow keys pressed between the
-    # log line and "Taste drücken..." are not echoed as [A / [B garbage.
-    stty sane 2>/dev/null || true
-    stty -echo 2>/dev/null || true
-    tput cnorm 2>/dev/null || true
-    # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
-    # typed during/after task execution) before the "press key" prompt.
-    drain_stdin
-    
     # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
-    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+
+    # Interactive cleanup and keypress prompt — skipped in CLI mode
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        # Reset terminal state to clean state after task execution
+        # This prevents issues with arrow keys and terminal modes.
+        # Immediately re-disable echo after sane so arrow keys pressed between the
+        # log line and "Taste drücken..." are not echoed as [A / [B garbage.
+        stty sane 2>/dev/null || true
+        stty -echo 2>/dev/null || true
+        tput cnorm 2>/dev/null || true
+        # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
+        # typed during/after task execution) before the "press key" prompt.
+        drain_stdin
+        echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+    fi
+    return "$exit_status"
+}
+
+# ==============================================================================
+#  CLI MODE (non-interactive --list / --run)
+# ==============================================================================
+
+# shellcheck disable=SC2034
+_cli_matches=()   # populated by cli_match_tasks(); array of matching indices
+
+cli_match_tasks() {
+    local query="$1"
+    _cli_matches=()
+    local total=${#menu_options[@]}
+
+    # Numeric query: direct 1-based index lookup
+    if [[ "$query" =~ ^[0-9]+$ ]]; then
+        local idx=$(( query - 1 ))
+        if [ "$idx" -lt 0 ] || [ "$idx" -ge "$total" ]; then
+            echo "Task number $query out of range (1–$total)" >&2
+            return 1
+        fi
+        _cli_matches=("$idx")
+        return 0
+    fi
+
+    local query_lower i _lvl _name _cmd _desc name_lower
+    query_lower=$(tr '[:upper:]' '[:lower:]' <<< "$query")
+
+    # Pass 1: exact name match (case-insensitive full string)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [ "$name_lower" = "$query_lower" ] && _cli_matches+=("$i")
+    done
+    [ "${#_cli_matches[@]}" -gt 0 ] && return 0
+
+    # Pass 2: substring match (case-insensitive)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [[ "$name_lower" == *"$query_lower"* ]] && _cli_matches+=("$i")
+    done
+
+    if [ "${#_cli_matches[@]}" -eq 0 ]; then
+        echo "No task found matching '$query'" >&2
+        return 1
+    fi
+    return 0
+}
+
+cli_run_task() {
+    local query="$1"
+    local total=${#menu_options[@]}
+
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found." >&2
+        return 1
+    fi
+
+    if ! cli_match_tasks "$query"; then
+        return 1
+    fi
+
+    local match_count=${#_cli_matches[@]}
+    local chosen_idx=""
+
+    if [ "$match_count" -eq 1 ]; then
+        chosen_idx="${_cli_matches[0]}"
+    else
+        # Disambiguation: print matches, read single keypress
+        echo "Multiple matches for \"$query\":"
+        local j _lvl _name _cmd _desc
+        for (( j=0; j<match_count; j++ )); do
+            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[${_cli_matches[$j]}]}"
+            printf "  %d)  %s\n" "$(( j + 1 ))" "$_name"
+        done
+        echo ""
+        printf "Select [1-%d] or q to cancel: " "$match_count"
+
+        local key
+        while true; do
+            stty -icanon min 1 time 0 2>/dev/null
+            key=$(dd bs=1 count=1 2>/dev/null)
+            stty sane 2>/dev/null || true
+            case "$key" in
+                q|Q|$'\x1b')
+                    echo ""
+                    echo "Cancelled."
+                    return 0
+                    ;;
+                [1-9])
+                    local sel
+                    sel=$(( key - 1 ))
+                    if [ "$sel" -lt "$match_count" ]; then
+                        echo "$key"
+                        chosen_idx="${_cli_matches[$sel]}"
+                        break
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    local _lvl _name _cmd _desc
+    IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$chosen_idx]}"
+    execute_task "$_cmd" "$_name" "$_desc"
+    return $?
+}
+
+cli_list_tasks() {
+    local total=${#menu_options[@]}
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found."
+        return 0
+    fi
+    echo "Tasks ($total)"
+    local i _lvl _name _cmd _desc
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        local num=$(( i + 1 ))
+        printf "  %2d)  %-22s  %s\n" "$num" "${_name:0:22}" "$_desc"
+    done
 }
 
 # ==============================================================================
@@ -2546,94 +2760,124 @@ get_menu_options() {
 }
 
 draw_menu() {
-    # Optimization: Use tput to move cursor instead of clearing screen (reduces flicker)
-    # macOS/BSD tput generally supports 'cup' and 'ed' (clear to end of screen)
     if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_CUP" ]; then
         echo -ne "$TPUT_CUP"
     else
         clear
     fi
     hide_cursor
-    
-    # Header
+
+    # ── Header ───────────────────────────────────────────────────────
     local mode_indicator="[${active_mode}]"
-    local profile_name=""
     if [ "$active_mode" = "global" ] && [ -f "$config_path" ]; then
-        # Bash string-ops: no $(basename) subshell in hot render path.
-        # .tasks.docker → strip dir → .tasks.docker → strip .tasks prefix → .docker → strip dot → docker
         local _bn="${config_path##*/}"
-        profile_name="${_bn##.tasks}"   # strip .tasks prefix (→ .docker or "")
-        profile_name="${profile_name#.}" # strip leading dot  (→ docker  or "")
-        [ -n "$profile_name" ] && mode_indicator="[${profile_name}]"
+        local _pname="${_bn##.tasks}"; _pname="${_pname#.}"
+        [ -n "$_pname" ] && mode_indicator="[${_pname}]"
     fi
-    
     echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
-    
+
+    # Context line (git branch, hostname, env) — empty string = no line
+    [ -n "${_CTX_LINE:-}" ] && echo -e "${_CTX_LINE}"
+
     if [ "$current_level" -gt 0 ]; then
-        local breadcrumb=""
-        for bname in "${history_name_stack[@]}"; do
-            breadcrumb="${breadcrumb}${bname} > "
-        done
-        echo -e "${COLOR_DIM}${breadcrumb%> }${COLOR_RESET}"
+        local _bc=""
+        for _bname in "${history_name_stack[@]}"; do _bc="${_bc}${_bname} > "; done
+        echo -e "${COLOR_DIM}${_bc%> }${COLOR_RESET}"
     fi
-    
-    if [ -n "$filter_query" ]; then
-        echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
-    fi
-    
-    if [ -n "$tag_filter" ]; then
-        echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
-    fi
-    
+    [ -n "$filter_query" ] && echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
+    [ -n "$tag_filter"   ] && echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
     echo ""
-    
-    # Menu grid
+
+    # ── Empty state ──────────────────────────────────────────────────
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
         echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}"
+        [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
         return
     fi
-    
+
+    # ── Layout ───────────────────────────────────────────────────────
     calculate_layout "$total"
     local rows=$_layout_rows cols=$_layout_cols
+    local term_width="${TPUT_COLS:-80}"
+    local col_width=$(( term_width / cols ))
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+    local name_max=$(( inner - 4 ))
+    [ "$name_max" -lt 1 ] && name_max=1
 
-    for ((r=0; r<rows; r++)); do
-        for ((c=0; c<cols; c++)); do
-            local idx=$((r + c * rows))
-            [ "$idx" -ge "$total" ] && continue
-            
-            IFS='|' read -r level name cmd desc <<< "${menu_options[$idx]}"
-            
-            local marker="  "
-            local color="$COLOR_RESET"
-            
-            if [ "$idx" -eq "$selected_index" ]; then
-                marker="► "
-                color="$COLOR_SEL"
-            fi
-            
-            if [ -n "${multi_select_map[$idx]:-}" ]; then
-                marker="☑ "
-            fi
-            
-            # Truncate long names
-            local max_len=35
-            if [ "${#name}" -gt "$max_len" ]; then
-                name="${name:0:$((max_len-3))}..."
-            fi
-            
-            printf "%s%s%-${max_len}s%s  " "$color" "$marker" "$name" "$COLOR_RESET"
-        done
-        echo ""
-    done
-    
-    echo ""
-    echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi-Select | [?] Help${COLOR_RESET}"
-    
-    # Optimization: Clear remaining lines to ensure old menu items are removed
-    if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ]; then
-        echo -ne "$TPUT_ED"
+    # Rebuild border strings when col_width changed (e.g. terminal resize)
+    if [ "$col_width" -ne "${_LAST_COL_WIDTH:-0}" ]; then
+        build_border_strings "$col_width"
     fi
+
+    # ── Grid rendering (3 lines per row) ─────────────────────────────
+    local r c idx
+    local gap="  "   # 2-space gap between columns; added BEFORE column (not after)
+
+    for (( r=0; r<rows; r++ )); do
+        local top_line="" content_line="" bot_line=""
+        local first_in_row=1
+
+        for (( c=0; c<cols; c++ )); do
+            idx=$(( r + c * rows ))
+            [ "$idx" -ge "$total" ] && continue
+
+            local border_color="$COLOR_DIM"
+            [ "$idx" -eq "$selected_index" ] && border_color="$COLOR_SEL"
+
+            # Gap before all columns except the first in this row
+            if [ "$first_in_row" -eq 0 ]; then
+                top_line+="$gap"
+                content_line+="$gap"
+                bot_line+="$gap"
+            fi
+            first_in_row=0
+
+            # Top/bottom border
+            top_line+="${border_color}${_BORDER_TOP}${COLOR_RESET}"
+            bot_line+="${border_color}${_BORDER_BOT}${COLOR_RESET}"
+
+            # Content
+            # shellcheck disable=SC2034
+            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$idx]}"
+
+            local marker="  "
+            local text_color="$COLOR_DIM"
+            if [ "$idx" -eq "$selected_index" ]; then
+                marker="► "; text_color="$COLOR_BOLD"
+            fi
+            if [ -n "${multi_select_map[$idx]:-}" ]; then
+                marker="☑ "; text_color="$COLOR_INFO"
+            fi
+
+            # Truncate name to fit
+            if [ "${#_name}" -gt "$name_max" ]; then
+                local _trunc=$(( name_max - 3 ))
+                [ "$_trunc" -lt 1 ] && _trunc=1
+                _name="${_name:0:$_trunc}..."
+            fi
+            # Pad name to name_max chars — printf -v avoids subshell
+            local _padded
+            printf -v _padded "%-*s" "$name_max" "$_name"
+
+            content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
+        done
+
+        echo -e "$top_line"
+        echo -e "$content_line"
+        echo -e "$bot_line"
+    done
+
+    # ── Footer hints ─────────────────────────────────────────────────
+    echo ""
+    if [ "$cols" -gt 1 ]; then
+        echo -e "${COLOR_DIM}[↑↓ ←→ h/l] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+    else
+        echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+    fi
+
+    [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
 }
 
 # ==============================================================================
@@ -3478,7 +3722,13 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [--init|--analyze|--global|--edit|--update|--debug] [profile]"
+            echo "Usage: run [options] [profile]"
+            echo ""
+            echo "CLI Mode (no menu):"
+            echo "  run --list              List all tasks for current profile"
+            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run --dry-run --run <n> Preview command without executing"
+            echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
             echo "  run <name>              Load profile .tasks.<name>"
@@ -3569,6 +3819,24 @@ while [[ $# -gt 0 ]]; do
             edit_config_menu "$config_path"
             exit 0
             ;;
+        --run)
+            shift
+            cli_run_query="${1:-}"
+            if [ -z "$cli_run_query" ]; then
+                echo "Usage: --run <name-or-number>" >&2
+                exit 1
+            fi
+            cli_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run_mode=1
+            shift
+            ;;
+        --list)
+            cli_list_mode=1
+            shift
+            ;;
         *)
             args+=("$1")
             shift
@@ -3592,7 +3860,7 @@ if [ "$DEBUG_MODE" -eq 1 ]; then
 fi
 
 set +u  # Disable nounset for array check
-if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
+if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
@@ -3673,6 +3941,16 @@ IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
+
+# CLI mode dispatch — must come after menu_options is populated
+if [ "${cli_list_mode:-0}" -eq 1 ]; then
+    cli_list_tasks
+    exit 0
+fi
+if [ -n "${cli_run_query:-}" ]; then
+    cli_run_task "$cli_run_query"
+    exit $?
+fi
 
 # Main interactive loop is in 13-ui.sh
 main_interactive_loop
