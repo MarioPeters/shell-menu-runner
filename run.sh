@@ -60,7 +60,7 @@ set -euo pipefail
 # --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
 COLOR_WARN=$'\e[1;33m'; COLOR_INFO=$'\e[33m';  COLOR_DIM=$'\e[2m'
-COLOR_RESET=$'\e[0m'
+COLOR_RESET=$'\e[0m';   COLOR_BOLD=$'\e[0;1m'
 
 # --- GLOBAL STATE ---
 current_level=0
@@ -88,16 +88,22 @@ DEBUG_MODE=0
 readonly DEFAULT_LANG="DE"
 readonly DEFAULT_THEME="CYBER"
 readonly DEFAULT_COLS_MIN=1
-readonly DEFAULT_COLS_MAX=3
+readonly DEFAULT_COLS_MAX=4
+readonly DEFAULT_COLS_MIN_WIDTH=30
+readonly DEFAULT_CONTEXT_SHOW="git,hostname,env"
 UI_LANG="$DEFAULT_LANG"
 UI_THEME="$DEFAULT_THEME"
 COLS_MIN="$DEFAULT_COLS_MIN"
 COLS_MAX="$DEFAULT_COLS_MAX"
+COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 TASK_THEME=""
 SETTINGS_THEME=""
 SETTINGS_LANG=""
 SETTINGS_COLS_MIN=""
 SETTINGS_COLS_MAX=""
+SETTINGS_COLS_MIN_WIDTH=""
+SETTINGS_CONTEXT_SHOW=""
 
 # ==============================================================================
 #  CONFIG FILE PARSING
@@ -138,10 +144,12 @@ parse_settings_file() {
         local key="${line%%=*}"
         local value="${line#*=}"
         case "$key" in
-            THEME) SETTINGS_THEME="$value" ;;
-            LANG) SETTINGS_LANG="$value" ;;
-            COLS_MIN) SETTINGS_COLS_MIN="$value" ;;
-            COLS_MAX) SETTINGS_COLS_MAX="$value" ;;
+            THEME)          SETTINGS_THEME="$value" ;;
+            LANG)           SETTINGS_LANG="$value" ;;
+            COLS_MIN)       SETTINGS_COLS_MIN="$value" ;;
+            COLS_MAX)       SETTINGS_COLS_MAX="$value" ;;
+            COLS_MIN_WIDTH) SETTINGS_COLS_MIN_WIDTH="$value" ;;
+            CONTEXT_SHOW)   SETTINGS_CONTEXT_SHOW="$value" ;;
         esac
     done < "$file"
 }
@@ -151,21 +159,27 @@ resolve_settings() {
     UI_THEME="$DEFAULT_THEME"
     COLS_MIN="$DEFAULT_COLS_MIN"
     COLS_MAX="$DEFAULT_COLS_MAX"
+    COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+    CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 
-    [ -n "$SETTINGS_LANG" ] && UI_LANG="$SETTINGS_LANG"
+    [ -n "$SETTINGS_LANG" ]          && UI_LANG="$SETTINGS_LANG"
     if [ -n "$SETTINGS_THEME" ]; then
         UI_THEME="$SETTINGS_THEME"
     elif [ -n "$TASK_THEME" ]; then
         UI_THEME="$TASK_THEME"
     fi
-    [ -n "$SETTINGS_COLS_MIN" ] && COLS_MIN="$SETTINGS_COLS_MIN"
-    [ -n "$SETTINGS_COLS_MAX" ] && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN" ]       && COLS_MIN="$SETTINGS_COLS_MIN"
+    [ -n "$SETTINGS_COLS_MAX" ]       && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN_WIDTH" ] && COLS_MIN_WIDTH="$SETTINGS_COLS_MIN_WIDTH"
+    [ -n "$SETTINGS_CONTEXT_SHOW" ]   && CONTEXT_SHOW="$SETTINGS_CONTEXT_SHOW"
 
     return 0
 }
 
 load_settings() {
-    SETTINGS_THEME=""; SETTINGS_LANG=""; SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_THEME=""; SETTINGS_LANG=""
+    SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_COLS_MIN_WIDTH=""; SETTINGS_CONTEXT_SHOW=""
     parse_settings_file "$GLOBAL_SETTINGS"
     parse_settings_file "$(get_local_settings_path)"
     resolve_settings
@@ -181,6 +195,8 @@ THEME=$UI_THEME
 LANG=$UI_LANG
 COLS_MIN=$COLS_MIN
 COLS_MAX=$COLS_MAX
+COLS_MIN_WIDTH=$COLS_MIN_WIDTH
+CONTEXT_SHOW=$CONTEXT_SHOW
 EOF
 }
 
@@ -344,6 +360,19 @@ validate_filename() {
 #  TERMINAL & SSH DETECTION
 # ==============================================================================
 
+# Context indicator — built once at init, read by draw_menu()
+_CTX_LINE=""
+_CTX_BRANCH=""
+_CTX_HOST=""
+_CTX_ENV=""
+_LAST_COL_WIDTH=0
+
+# Border string cache — rebuilt when col_width changes (WINCH trap resets _LAST_COL_WIDTH)
+# shellcheck disable=SC2034
+_BORDER_TOP=""
+# shellcheck disable=SC2034
+_BORDER_BOT=""
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
@@ -361,6 +390,67 @@ check_ssh_session() {
     else
         is_ssh_session=0
     fi
+}
+
+init_context() {
+    _CTX_LINE=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
+    local show="${CONTEXT_SHOW:-git,hostname,env}"
+    local parts=()
+
+    # Git branch — subprocess is acceptable at init (not in render loop)
+    if [[ "$show" == *"git"* ]]; then
+        _CTX_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        [ -n "$_CTX_BRANCH" ] && parts+=("${COLOR_INFO}⎇ ${_CTX_BRANCH}${COLOR_RESET}")
+    fi
+
+    # Hostname — only on SSH sessions
+    if [[ "$show" == *"hostname"* ]]; then
+        if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+            _CTX_HOST="${HOSTNAME:-$(hostname 2>/dev/null || true)}"
+            [ -n "$_CTX_HOST" ] && parts+=("${COLOR_ERR}⚡ ${_CTX_HOST}${COLOR_RESET}")
+        fi
+    fi
+
+    # Environment variable
+    if [[ "$show" == *"env"* ]]; then
+        _CTX_ENV="${APP_ENV:-${ENVIRONMENT:-${DEPLOY_ENV:-}}}"
+        if [ -n "$_CTX_ENV" ]; then
+            local env_lower env_upper env_color
+            env_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_CTX_ENV")
+            env_upper=$(tr '[:lower:]' '[:upper:]' <<< "$_CTX_ENV")
+            case "$env_lower" in
+                production|prod) env_color="$COLOR_ERR"  ;;
+                staging|stg)     env_color="$COLOR_WARN" ;;
+                development|dev) env_color="$COLOR_INFO" ;;
+                *)               env_color="$COLOR_DIM"  ;;
+            esac
+            parts+=("${env_color}${env_upper}${COLOR_RESET}")
+        fi
+    fi
+
+    # Join parts with " · " separator — pure Bash, no subshell
+    if [ "${#parts[@]}" -gt 0 ]; then
+        local line="${parts[0]}"
+        local i
+        for (( i=1; i<${#parts[@]}; i++ )); do
+            line+="${COLOR_DIM} · ${COLOR_RESET}${parts[$i]}"
+        done
+        _CTX_LINE="$line"
+    fi
+}
+
+build_border_strings() {
+    local col_width="$1"
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+
+    # Build dash string with pure Bash loop — no subshell, no seq
+    local dashes="" i
+    for (( i=0; i<inner; i++ )); do dashes+='─'; done
+
+    _BORDER_TOP="┌${dashes}┐"
+    _BORDER_BOT="└${dashes}┘"
+    _LAST_COL_WIDTH="$col_width"
 }
 
 # Optimized terminal capability caching
@@ -381,8 +471,11 @@ init_terminal_capabilities() {
         HAS_TPUT=0
         TPUT_COLS=80
     fi
-    # Update cols on resize
-    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80)' WINCH
+    # Update cols on resize, reset border cache
+    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); _LAST_COL_WIDTH=0' WINCH
+
+    # Context indicator (git branch, hostname, env)
+    init_context
 }
 
 consume_keypress() {
@@ -2373,20 +2466,31 @@ extract_field_from_grep() {
 # Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
-    local cols=1
-    local rows="$total"
     local term_width="${TPUT_COLS:-80}"
+    local min_col_width="${COLS_MIN_WIDTH:-30}"
+    local max_cols="${COLS_MAX:-4}"
+    local min_cols="${COLS_MIN:-1}"
 
-    if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
-        cols=3
-        rows=$(( (total + cols - 1) / cols ))
-    elif [ "$total" -gt 6 ] && [ "$term_width" -ge 100 ] && [ "$COLS_MAX" -ge 2 ]; then
-        cols=2
-        rows=$(( (total + cols - 1) / cols ))
+    # Derive column count from terminal width
+    local cols=$(( term_width / min_col_width ))
+
+    # Apply COLS_MAX (0 = unlimited)
+    if [ "$max_cols" -gt 0 ] && [ "$cols" -gt "$max_cols" ]; then
+        cols="$max_cols"
     fi
 
-    [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
-    [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
+    # Don't use more columns than makes sense (at least 2 items per column)
+    if [ "$total" -gt 0 ]; then
+        local max_useful=$(( (total + 1) / 2 ))
+        [ "$cols" -gt "$max_useful" ] && cols="$max_useful"
+    fi
+
+    # Apply minimum column count
+    [ "$cols" -lt "$min_cols" ] && cols="$min_cols"
+    [ "$cols" -lt 1 ] && cols=1
+
+    local rows=$(( (total + cols - 1) / cols ))
+    [ "$rows" -lt 1 ] && rows=1
 
     _layout_rows=$rows
     _layout_cols=$cols
@@ -2519,94 +2623,122 @@ get_menu_options() {
 }
 
 draw_menu() {
-    # Optimization: Use tput to move cursor instead of clearing screen (reduces flicker)
-    # macOS/BSD tput generally supports 'cup' and 'ed' (clear to end of screen)
     if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_CUP" ]; then
         echo -ne "$TPUT_CUP"
     else
         clear
     fi
     hide_cursor
-    
-    # Header
+
+    # ── Header ───────────────────────────────────────────────────────
     local mode_indicator="[${active_mode}]"
-    local profile_name=""
     if [ "$active_mode" = "global" ] && [ -f "$config_path" ]; then
-        # Bash string-ops: no $(basename) subshell in hot render path.
-        # .tasks.docker → strip dir → .tasks.docker → strip .tasks prefix → .docker → strip dot → docker
         local _bn="${config_path##*/}"
-        profile_name="${_bn##.tasks}"   # strip .tasks prefix (→ .docker or "")
-        profile_name="${profile_name#.}" # strip leading dot  (→ docker  or "")
-        [ -n "$profile_name" ] && mode_indicator="[${profile_name}]"
+        local _pname="${_bn##.tasks}"; _pname="${_pname#.}"
+        [ -n "$_pname" ] && mode_indicator="[${_pname}]"
     fi
-    
     echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
-    
+
+    # Context line (git branch, hostname, env) — empty string = no line
+    [ -n "${_CTX_LINE:-}" ] && echo -e "${_CTX_LINE}"
+
     if [ "$current_level" -gt 0 ]; then
-        local breadcrumb=""
-        for bname in "${history_name_stack[@]}"; do
-            breadcrumb="${breadcrumb}${bname} > "
-        done
-        echo -e "${COLOR_DIM}${breadcrumb%> }${COLOR_RESET}"
+        local _bc=""
+        for _bname in "${history_name_stack[@]}"; do _bc="${_bc}${_bname} > "; done
+        echo -e "${COLOR_DIM}${_bc%> }${COLOR_RESET}"
     fi
-    
-    if [ -n "$filter_query" ]; then
-        echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
-    fi
-    
-    if [ -n "$tag_filter" ]; then
-        echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
-    fi
-    
+    [ -n "$filter_query" ] && echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
+    [ -n "$tag_filter"   ] && echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
     echo ""
-    
-    # Menu grid
+
+    # ── Empty state ──────────────────────────────────────────────────
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
         echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}"
+        [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
         return
     fi
-    
+
+    # ── Layout ───────────────────────────────────────────────────────
     calculate_layout "$total"
     local rows=$_layout_rows cols=$_layout_cols
+    local term_width="${TPUT_COLS:-80}"
+    local col_width=$(( term_width / cols ))
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+    local name_max=$(( inner - 4 ))
+    [ "$name_max" -lt 1 ] && name_max=1
 
-    for ((r=0; r<rows; r++)); do
-        for ((c=0; c<cols; c++)); do
-            local idx=$((r + c * rows))
-            [ "$idx" -ge "$total" ] && continue
-            
-            IFS='|' read -r level name cmd desc <<< "${menu_options[$idx]}"
-            
-            local marker="  "
-            local color="$COLOR_RESET"
-            
-            if [ "$idx" -eq "$selected_index" ]; then
-                marker="► "
-                color="$COLOR_SEL"
-            fi
-            
-            if [ -n "${multi_select_map[$idx]:-}" ]; then
-                marker="☑ "
-            fi
-            
-            # Truncate long names
-            local max_len=35
-            if [ "${#name}" -gt "$max_len" ]; then
-                name="${name:0:$((max_len-3))}..."
-            fi
-            
-            printf "%s%s%-${max_len}s%s  " "$color" "$marker" "$name" "$COLOR_RESET"
-        done
-        echo ""
-    done
-    
-    echo ""
-    echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi-Select | [?] Help${COLOR_RESET}"
-    
-    # Optimization: Clear remaining lines to ensure old menu items are removed
-    if [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ]; then
-        echo -ne "$TPUT_ED"
+    # Rebuild border strings when col_width changed (e.g. terminal resize)
+    if [ "$col_width" -ne "${_LAST_COL_WIDTH:-0}" ]; then
+        build_border_strings "$col_width"
     fi
+
+    # ── Grid rendering (3 lines per row) ─────────────────────────────
+    local r c idx
+    local gap="  "   # 2-space gap between columns; added BEFORE column (not after)
+
+    for (( r=0; r<rows; r++ )); do
+        local top_line="" content_line="" bot_line=""
+        local first_in_row=1
+
+        for (( c=0; c<cols; c++ )); do
+            idx=$(( r + c * rows ))
+            [ "$idx" -ge "$total" ] && continue
+
+            local border_color="$COLOR_DIM"
+            [ "$idx" -eq "$selected_index" ] && border_color="$COLOR_SEL"
+
+            # Gap before all columns except the first in this row
+            if [ "$first_in_row" -eq 0 ]; then
+                top_line+="$gap"
+                content_line+="$gap"
+                bot_line+="$gap"
+            fi
+            first_in_row=0
+
+            # Top/bottom border
+            top_line+="${border_color}${_BORDER_TOP}${COLOR_RESET}"
+            bot_line+="${border_color}${_BORDER_BOT}${COLOR_RESET}"
+
+            # Content
+            # shellcheck disable=SC2034
+            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$idx]}"
+
+            local marker="  "
+            local text_color="$COLOR_DIM"
+            if [ "$idx" -eq "$selected_index" ]; then
+                marker="► "; text_color="$COLOR_BOLD"
+            fi
+            if [ -n "${multi_select_map[$idx]:-}" ]; then
+                marker="☑ "; text_color="$COLOR_INFO"
+            fi
+
+            # Truncate name to fit
+            if [ "${#_name}" -gt "$name_max" ]; then
+                _name="${_name:0:$((name_max-3))}..."
+            fi
+            # Pad name to name_max chars — printf -v avoids subshell
+            local _padded
+            printf -v _padded "%-*s" "$name_max" "$_name"
+
+            content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
+        done
+
+        echo -e "$top_line"
+        echo -e "$content_line"
+        echo -e "$bot_line"
+    done
+
+    # ── Footer hints ─────────────────────────────────────────────────
+    echo ""
+    if [ "$cols" -gt 1 ]; then
+        echo -e "${COLOR_DIM}[↑↓ ←→ h/l] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+    else
+        echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+    fi
+
+    [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
 }
 
 # ==============================================================================

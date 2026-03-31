@@ -2,6 +2,19 @@
 #  TERMINAL & SSH DETECTION
 # ==============================================================================
 
+# Context indicator — built once at init, read by draw_menu()
+_CTX_LINE=""
+_CTX_BRANCH=""
+_CTX_HOST=""
+_CTX_ENV=""
+_LAST_COL_WIDTH=0
+
+# Border string cache — rebuilt when col_width changes (WINCH trap resets _LAST_COL_WIDTH)
+# shellcheck disable=SC2034
+_BORDER_TOP=""
+# shellcheck disable=SC2034
+_BORDER_BOT=""
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
@@ -19,6 +32,67 @@ check_ssh_session() {
     else
         is_ssh_session=0
     fi
+}
+
+init_context() {
+    _CTX_LINE=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
+    local show="${CONTEXT_SHOW:-git,hostname,env}"
+    local parts=()
+
+    # Git branch — subprocess is acceptable at init (not in render loop)
+    if [[ "$show" == *"git"* ]]; then
+        _CTX_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        [ -n "$_CTX_BRANCH" ] && parts+=("${COLOR_INFO}⎇ ${_CTX_BRANCH}${COLOR_RESET}")
+    fi
+
+    # Hostname — only on SSH sessions
+    if [[ "$show" == *"hostname"* ]]; then
+        if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+            _CTX_HOST="${HOSTNAME:-$(hostname 2>/dev/null || true)}"
+            [ -n "$_CTX_HOST" ] && parts+=("${COLOR_ERR}⚡ ${_CTX_HOST}${COLOR_RESET}")
+        fi
+    fi
+
+    # Environment variable
+    if [[ "$show" == *"env"* ]]; then
+        _CTX_ENV="${APP_ENV:-${ENVIRONMENT:-${DEPLOY_ENV:-}}}"
+        if [ -n "$_CTX_ENV" ]; then
+            local env_lower env_upper env_color
+            env_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_CTX_ENV")
+            env_upper=$(tr '[:lower:]' '[:upper:]' <<< "$_CTX_ENV")
+            case "$env_lower" in
+                production|prod) env_color="$COLOR_ERR"  ;;
+                staging|stg)     env_color="$COLOR_WARN" ;;
+                development|dev) env_color="$COLOR_INFO" ;;
+                *)               env_color="$COLOR_DIM"  ;;
+            esac
+            parts+=("${env_color}${env_upper}${COLOR_RESET}")
+        fi
+    fi
+
+    # Join parts with " · " separator — pure Bash, no subshell
+    if [ "${#parts[@]}" -gt 0 ]; then
+        local line="${parts[0]}"
+        local i
+        for (( i=1; i<${#parts[@]}; i++ )); do
+            line+="${COLOR_DIM} · ${COLOR_RESET}${parts[$i]}"
+        done
+        _CTX_LINE="$line"
+    fi
+}
+
+build_border_strings() {
+    local col_width="$1"
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+
+    # Build dash string with pure Bash loop — no subshell, no seq
+    local dashes="" i
+    for (( i=0; i<inner; i++ )); do dashes+='─'; done
+
+    _BORDER_TOP="┌${dashes}┐"
+    _BORDER_BOT="└${dashes}┘"
+    _LAST_COL_WIDTH="$col_width"
 }
 
 # Optimized terminal capability caching
@@ -39,8 +113,11 @@ init_terminal_capabilities() {
         HAS_TPUT=0
         TPUT_COLS=80
     fi
-    # Update cols on resize
-    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80)' WINCH
+    # Update cols on resize, reset border cache
+    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); _LAST_COL_WIDTH=0' WINCH
+
+    # Context indicator (git branch, hostname, env)
+    init_context
 }
 
 consume_keypress() {

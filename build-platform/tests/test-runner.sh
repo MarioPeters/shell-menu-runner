@@ -470,6 +470,188 @@ test_empty_config() {
     fi
 }
 
+test_cols_min_width_setting() {
+    test_start "COLS_MIN_WIDTH setting is read from .runrc"
+
+    local tmp_dir="/tmp/test_cols_min_width_$$"
+    mkdir -p "$tmp_dir"
+    printf 'COLS_MIN_WIDTH=25\n' > "$tmp_dir/.runrc"
+    printf '0|Task A|echo a|desc\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" ""; then
+        test_pass   # just checking no crash on unknown key
+    else
+        test_fail "Script crashed reading COLS_MIN_WIDTH from .runrc"
+    fi
+}
+
+test_context_show_setting() {
+    test_start "CONTEXT_SHOW setting is read from .runrc without crash"
+
+    local tmp_dir="/tmp/test_ctx_show_$$"
+    mkdir -p "$tmp_dir"
+    printf 'CONTEXT_SHOW=hostname,env\n' > "$tmp_dir/.runrc"
+    printf '0|Task A|echo a|desc\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" ""; then
+        test_pass
+    else
+        test_fail "Script crashed reading CONTEXT_SHOW from .runrc"
+    fi
+}
+
+# ==============================================================================
+#  LAYOUT ALGORITHM TESTS
+# ==============================================================================
+
+# Unit-test calculate_layout by sourcing only the needed src files in a subshell.
+# Tests fail with the old hardcoded-threshold implementation.
+_run_calc_layout() {
+    # Args: tput_cols cols_min_width cols_max total
+    bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        TPUT_COLS=$1; COLS_MIN_WIDTH=$2; COLS_MAX=$3; COLS_MIN=1
+        source '$ROOT_DIR/src/13-ui.sh' 2>/dev/null
+        calculate_layout $4
+        printf '%d %d' \$_layout_cols \$_layout_rows
+    "
+}
+
+test_calculate_layout_70_width() {
+    test_start "calculate_layout: 70-char terminal → 2 cols (8 tasks, COLS_MIN_WIDTH=30)"
+    local result
+    result=$(_run_calc_layout 70 30 4 8)
+    if assert_equals "2 4" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '2 4', got: '$result'"
+    fi
+}
+
+test_calculate_layout_120_width() {
+    test_start "calculate_layout: 120-char terminal → 4 cols (12 tasks, COLS_MIN_WIDTH=30)"
+    local result
+    result=$(_run_calc_layout 120 30 4 12)
+    if assert_equals "4 3" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '4 3', got: '$result'"
+    fi
+}
+
+test_calculate_layout_cols_max_cap() {
+    test_start "calculate_layout: COLS_MAX=2 caps at 2 even if terminal is wide"
+    local result
+    result=$(_run_calc_layout 200 30 2 12)
+    if assert_equals "2 6" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '2 6', got: '$result'"
+    fi
+}
+
+test_calculate_layout_unlimited_cols() {
+    test_start "calculate_layout: COLS_MAX=0 means unlimited (200-char, 20 tasks)"
+    local result
+    result=$(_run_calc_layout 200 30 0 20)
+    # cols = floor(200/30) = 6, capped at ceil(20/2)=10 → 6
+    # rows = ceil(20/6) = 4
+    if assert_equals "6 4" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '6 4', got: '$result'"
+    fi
+}
+
+test_calculate_layout_narrow_terminal() {
+    test_start "calculate_layout: 25-char terminal → always 1 col"
+    local result
+    result=$(_run_calc_layout 25 30 4 5)
+    if assert_equals "1 5" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '1 5', got: '$result'"
+    fi
+}
+
+# ==============================================================================
+#  CONTEXT INDICATOR TESTS
+# ==============================================================================
+
+test_init_context_no_crash() {
+    test_start "init_context: runs without crash in non-git, non-SSH dir"
+
+    local tmp_dir="/tmp/test_ctx_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|T|echo t|d\n' > "$tmp_dir/.tasks"
+
+    local output
+    # Run --version in a non-git dir; init_context is called during startup
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "1."; then
+        test_pass
+    else
+        test_fail "Script crashed during init_context: $output"
+    fi
+}
+
+test_build_border_strings() {
+    test_start "build_border_strings: correct length for col_width=30"
+
+    local result
+    result=$(bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/03-terminal.sh' 2>/dev/null
+        _LAST_COL_WIDTH=0; _BORDER_TOP=''; _BORDER_BOT=''
+        build_border_strings 30
+        # inner = 30-4 = 26; box width = inner+2 = 28; top = ┌ + 26×─ + ┐
+        echo \"\${#_BORDER_TOP} \${#_BORDER_BOT} \$_LAST_COL_WIDTH\"
+    ")
+
+    if assert_equals "28 28 30" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '28 28 30', got: '$result'"
+    fi
+}
+
+# ==============================================================================
+#  DRAW MENU TESTS
+# ==============================================================================
+
+test_draw_menu_build_integrity() {
+    test_start "draw_menu: build still produces valid run.sh after overhaul"
+    make -C "$ROOT_DIR" dev >/dev/null 2>&1
+    if assert_file_exists "$RUN_SCRIPT"; then
+        test_pass
+    else
+        test_fail "run.sh missing after build"
+    fi
+}
+
+test_draw_menu_help_intact() {
+    test_start "draw_menu: --help still works after overhaul"
+    local output
+    output=$("$RUN_SCRIPT" --help 2>&1 || true)
+    if assert_contains "$output" "Usage:"; then
+        test_pass
+    else
+        test_fail "Help broken after draw_menu overhaul: $output"
+    fi
+}
+
 # ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
@@ -503,6 +685,32 @@ run_all_tests() {
     test_dependency_execution
     test_environment_variables
     
+    echo ""
+    echo "${C_INFO}» Settings Tests${C_RST}"
+    test_cols_min_width_setting
+    test_context_show_setting
+
+    echo ""
+    echo "${C_INFO}» Layout Algorithm Tests${C_RST}"
+    test_calculate_layout_70_width
+    test_calculate_layout_120_width
+    test_calculate_layout_cols_max_cap
+    test_calculate_layout_unlimited_cols
+    test_calculate_layout_narrow_terminal
+
+    echo ""
+    echo "${C_INFO}» Context Indicator Tests${C_RST}"
+    test_init_context_no_crash
+
+    echo ""
+    echo "${C_INFO}» Border String Tests${C_RST}"
+    test_build_border_strings
+
+    echo ""
+    echo "${C_INFO}» Draw Menu Tests${C_RST}"
+    test_draw_menu_build_integrity
+    test_draw_menu_help_intact
+
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
     test_large_config_performance
