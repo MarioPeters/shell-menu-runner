@@ -7,20 +7,31 @@
 # Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
-    local cols=1
-    local rows="$total"
     local term_width="${TPUT_COLS:-80}"
+    local min_col_width="${COLS_MIN_WIDTH:-30}"
+    local max_cols="${COLS_MAX:-4}"
+    local min_cols="${COLS_MIN:-1}"
 
-    if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
-        cols=3
-        rows=$(( (total + cols - 1) / cols ))
-    elif [ "$total" -gt 6 ] && [ "$term_width" -ge 100 ] && [ "$COLS_MAX" -ge 2 ]; then
-        cols=2
-        rows=$(( (total + cols - 1) / cols ))
+    # Derive column count from terminal width
+    local cols=$(( term_width / min_col_width ))
+
+    # Apply COLS_MAX (0 = unlimited)
+    if [ "$max_cols" -gt 0 ] && [ "$cols" -gt "$max_cols" ]; then
+        cols="$max_cols"
     fi
 
-    [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
-    [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
+    # Don't use more columns than makes sense (at least 2 items per column)
+    if [ "$total" -gt 0 ]; then
+        local max_useful=$(( (total + 1) / 2 ))
+        [ "$cols" -gt "$max_useful" ] && cols="$max_useful"
+    fi
+
+    # Apply minimum column count
+    [ "$cols" -lt "$min_cols" ] && cols="$min_cols"
+    [ "$cols" -lt 1 ] && cols=1
+
+    local rows=$(( (total + cols - 1) / cols ))
+    [ "$rows" -lt 1 ] && rows=1
 
     _layout_rows=$rows
     _layout_cols=$cols

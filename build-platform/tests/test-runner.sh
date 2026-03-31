@@ -509,6 +509,81 @@ test_context_show_setting() {
 }
 
 # ==============================================================================
+#  LAYOUT ALGORITHM TESTS
+# ==============================================================================
+
+# Unit-test calculate_layout by sourcing only the needed src files in a subshell.
+# Tests fail with the old hardcoded-threshold implementation.
+_run_calc_layout() {
+    # Args: tput_cols cols_min_width cols_max total
+    bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        TPUT_COLS=$1; COLS_MIN_WIDTH=$2; COLS_MAX=$3; COLS_MIN=1
+        source '$ROOT_DIR/src/13-ui.sh' 2>/dev/null
+        calculate_layout $4
+        printf '%d %d' \$_layout_cols \$_layout_rows
+    "
+}
+
+test_calculate_layout_70_width() {
+    test_start "calculate_layout: 70-char terminal → 2 cols (8 tasks, COLS_MIN_WIDTH=30)"
+    local result
+    result=$(_run_calc_layout 70 30 4 8)
+    if assert_equals "2 4" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '2 4', got: '$result'"
+    fi
+}
+
+test_calculate_layout_120_width() {
+    test_start "calculate_layout: 120-char terminal → 4 cols (12 tasks, COLS_MIN_WIDTH=30)"
+    local result
+    result=$(_run_calc_layout 120 30 4 12)
+    if assert_equals "4 3" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '4 3', got: '$result'"
+    fi
+}
+
+test_calculate_layout_cols_max_cap() {
+    test_start "calculate_layout: COLS_MAX=2 caps at 2 even if terminal is wide"
+    local result
+    result=$(_run_calc_layout 200 30 2 12)
+    if assert_equals "2 6" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '2 6', got: '$result'"
+    fi
+}
+
+test_calculate_layout_unlimited_cols() {
+    test_start "calculate_layout: COLS_MAX=0 means unlimited (200-char, 20 tasks)"
+    local result
+    result=$(_run_calc_layout 200 30 0 20)
+    # cols = floor(200/30) = 6, capped at ceil(20/2)=10 → 6
+    # rows = ceil(20/6) = 4
+    if assert_equals "6 4" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '6 4', got: '$result'"
+    fi
+}
+
+test_calculate_layout_narrow_terminal() {
+    test_start "calculate_layout: 25-char terminal → always 1 col"
+    local result
+    result=$(_run_calc_layout 25 30 4 5)
+    if assert_equals "1 5" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '1 5', got: '$result'"
+    fi
+}
+
+# ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
 
@@ -545,6 +620,14 @@ run_all_tests() {
     echo "${C_INFO}» Settings Tests${C_RST}"
     test_cols_min_width_setting
     test_context_show_setting
+
+    echo ""
+    echo "${C_INFO}» Layout Algorithm Tests${C_RST}"
+    test_calculate_layout_70_width
+    test_calculate_layout_120_width
+    test_calculate_layout_cols_max_cap
+    test_calculate_layout_unlimited_cols
+    test_calculate_layout_narrow_terminal
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
