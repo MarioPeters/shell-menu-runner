@@ -420,7 +420,7 @@ cli_run_task() {
     fi
 
     local match_count=${#_cli_matches[@]}
-    local chosen_idx
+    local chosen_idx=""
 
     if [ "$match_count" -eq 1 ]; then
         chosen_idx="${_cli_matches[0]}"
@@ -439,7 +439,7 @@ cli_run_task() {
         while true; do
             stty -icanon min 1 time 0 2>/dev/null
             key=$(dd bs=1 count=1 2>/dev/null)
-            stty sane 2>/dev/null
+            stty sane 2>/dev/null || true
             case "$key" in
                 q|Q|$'\x1b')
                     echo ""
