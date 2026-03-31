@@ -214,7 +214,9 @@ execute_task() {
     if [ "$is_interactive" -eq 1 ]; then
         tput cnorm 2>/dev/null
     fi
-    clear 
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        clear
+    fi 
     echo -e "${COLOR_HEAD}$(msg executing)${COLOR_RESET} $name"
     
     if [[ "$desc" == "[!]"* ]]; then
@@ -353,6 +355,7 @@ execute_task() {
         drain_stdin
         echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
     fi
+    return "$exit_status"
 }
 
 # ==============================================================================
