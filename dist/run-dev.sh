@@ -88,16 +88,22 @@ DEBUG_MODE=1
 readonly DEFAULT_LANG="DE"
 readonly DEFAULT_THEME="CYBER"
 readonly DEFAULT_COLS_MIN=1
-readonly DEFAULT_COLS_MAX=3
+readonly DEFAULT_COLS_MAX=4
+readonly DEFAULT_COLS_MIN_WIDTH=30
+readonly DEFAULT_CONTEXT_SHOW="git,hostname,env"
 UI_LANG="$DEFAULT_LANG"
 UI_THEME="$DEFAULT_THEME"
 COLS_MIN="$DEFAULT_COLS_MIN"
 COLS_MAX="$DEFAULT_COLS_MAX"
+COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 TASK_THEME=""
 SETTINGS_THEME=""
 SETTINGS_LANG=""
 SETTINGS_COLS_MIN=""
 SETTINGS_COLS_MAX=""
+SETTINGS_COLS_MIN_WIDTH=""
+SETTINGS_CONTEXT_SHOW=""
 
 # ==============================================================================
 #  CONFIG FILE PARSING
@@ -119,7 +125,10 @@ parse_config_vars() {
 
 get_local_settings_path() {
     if [ -n "$config_path" ]; then
-        echo "$(dirname "$config_path")/$LOCAL_SETTINGS"
+        local _dir="${config_path%/*}"
+        # If no slash, config_path is a bare filename → same dir as PWD
+        [ "$_dir" = "$config_path" ] && _dir="."
+        echo "$_dir/$LOCAL_SETTINGS"
     else
         echo "$PWD/$LOCAL_SETTINGS"
     fi
@@ -135,10 +144,12 @@ parse_settings_file() {
         local key="${line%%=*}"
         local value="${line#*=}"
         case "$key" in
-            THEME) SETTINGS_THEME="$value" ;;
-            LANG) SETTINGS_LANG="$value" ;;
-            COLS_MIN) SETTINGS_COLS_MIN="$value" ;;
-            COLS_MAX) SETTINGS_COLS_MAX="$value" ;;
+            THEME)          SETTINGS_THEME="$value" ;;
+            LANG)           SETTINGS_LANG="$value" ;;
+            COLS_MIN)       SETTINGS_COLS_MIN="$value" ;;
+            COLS_MAX)       SETTINGS_COLS_MAX="$value" ;;
+            COLS_MIN_WIDTH) SETTINGS_COLS_MIN_WIDTH="$value" ;;
+            CONTEXT_SHOW)   SETTINGS_CONTEXT_SHOW="$value" ;;
         esac
     done < "$file"
 }
@@ -148,21 +159,27 @@ resolve_settings() {
     UI_THEME="$DEFAULT_THEME"
     COLS_MIN="$DEFAULT_COLS_MIN"
     COLS_MAX="$DEFAULT_COLS_MAX"
+    COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+    CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 
-    [ -n "$SETTINGS_LANG" ] && UI_LANG="$SETTINGS_LANG"
+    [ -n "$SETTINGS_LANG" ]          && UI_LANG="$SETTINGS_LANG"
     if [ -n "$SETTINGS_THEME" ]; then
         UI_THEME="$SETTINGS_THEME"
     elif [ -n "$TASK_THEME" ]; then
         UI_THEME="$TASK_THEME"
     fi
-    [ -n "$SETTINGS_COLS_MIN" ] && COLS_MIN="$SETTINGS_COLS_MIN"
-    [ -n "$SETTINGS_COLS_MAX" ] && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN" ]       && COLS_MIN="$SETTINGS_COLS_MIN"
+    [ -n "$SETTINGS_COLS_MAX" ]       && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN_WIDTH" ] && COLS_MIN_WIDTH="$SETTINGS_COLS_MIN_WIDTH"
+    [ -n "$SETTINGS_CONTEXT_SHOW" ]   && CONTEXT_SHOW="$SETTINGS_CONTEXT_SHOW"
 
     return 0
 }
 
 load_settings() {
-    SETTINGS_THEME=""; SETTINGS_LANG=""; SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_THEME=""; SETTINGS_LANG=""
+    SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_COLS_MIN_WIDTH=""; SETTINGS_CONTEXT_SHOW=""
     parse_settings_file "$GLOBAL_SETTINGS"
     parse_settings_file "$(get_local_settings_path)"
     resolve_settings
@@ -178,6 +195,8 @@ THEME=$UI_THEME
 LANG=$UI_LANG
 COLS_MIN=$COLS_MIN
 COLS_MAX=$COLS_MAX
+COLS_MIN_WIDTH=$COLS_MIN_WIDTH
+CONTEXT_SHOW=$CONTEXT_SHOW
 EOF
 }
 
@@ -187,9 +206,17 @@ EOF
 
 detect_config_files() {
     local config_dir
-    [ "$active_mode" = "local" ] && config_dir="$(dirname "$config_path")" || config_dir="$HOME"
-    local base_name
-    base_name="$(basename "$config_path")"
+    # Bash string-ops instead of $(dirname)/$(basename) subshells.
+    # The &&...|| idiom was a bug: if the && branch succeeded but the assignment
+    # somehow failed, the || branch would also run. Use if/else instead.
+    if [ "$active_mode" = "local" ]; then
+        config_dir="${config_path%/*}"
+        # If no slash found, config_path is a bare filename → use current dir
+        [ "$config_dir" = "$config_path" ] && config_dir="."
+    else
+        config_dir="$HOME"
+    fi
+    local base_name="${config_path##*/}"
     
     task_config_files=()
     if [ "$base_name" = ".tasks" ]; then
@@ -221,7 +248,16 @@ file_sha256() {
 #  POLYFILLS & UTILS
 # ==============================================================================
 
-get_realpath() { command -v realpath &>/dev/null && realpath "$1" || echo "$PWD/${1#./}"; }
+get_realpath() {
+    if command -v realpath &>/dev/null; then
+        realpath "$1"
+    elif [[ "$1" = /* ]]; then
+        # Absoluter Pfad: direkt zurückgeben (macOS ohne GNU-coreutils hat kein realpath)
+        echo "$1"
+    else
+        echo "$PWD/${1#./}"
+    fi
+}
 cleanup_terminal() { 
     if [ -n "${TPUT_CNORM:-}" ]; then
         echo -ne "$TPUT_CNORM"
@@ -248,7 +284,7 @@ error() { echo -e "${COLOR_ERR}$*${COLOR_RESET}"; }
 success() { echo -e "${COLOR_SEL}✔ $*${COLOR_RESET}"; }
 dim() { echo -e "${COLOR_DIM}$*${COLOR_RESET}"; }
 
-sanitize_filename() { echo "$1" | tr ' ' '_' | tr -cd 'A-Za-z0-9._-'; }
+sanitize_filename() { sed 's/ /_/g; s/[^A-Za-z0-9._-]//g' <<< "$1"; }
 
 # Kürzt eine Datei auf maximal $2 Zeilen (via tail).
 # Wird von add_to_history, add_to_recent und save_search_term genutzt.
@@ -344,9 +380,11 @@ check_ssh_session() {
 }
 
 # Optimized terminal capability caching
+_TPUT_INITIALIZED=0
 init_terminal_capabilities() {
-    # Only run once
-    [ -n "${TPUT_COLS:-}" ] && return
+    # Only run once — guard auf dediziertes Flag statt TPUT_COLS (könnte leer sein wenn tput cols versagt)
+    [ "${_TPUT_INITIALIZED:-0}" -eq 1 ] && return
+    _TPUT_INITIALIZED=1
 
     if command -v tput >/dev/null 2>&1; then
         TPUT_CUP="$(tput cup 0 0 2>/dev/null)"
@@ -368,11 +406,18 @@ consume_keypress() {
     # terminal while waiting for the keypress (e.g. after stty sane in execute_task).
     stty -echo 2>/dev/null
     read_key >/dev/null
+    # Drain any remaining bytes from multi-byte escape sequences (e.g. arrow keys
+    # send \x1b[A; read_key already consumed the full sequence, but defensive
+    # drain prevents leftover bytes leaking into the main loop's key handler).
+    drain_stdin
     stty echo 2>/dev/null
 }
 
 # Enable raw interactive input mode for the main loop.
 # Flags: no echo, no canonical buffering, pass signals, block until 1 char min.
+# NOTE: icrnl is intentionally left ON so Enter (\r→\n) is stripped by $()
+# to "". Spurious "" from a failed read_key_raw is blocked by the _rk_status
+# guard in the main loop (13-ui.sh), not by changing icrnl.
 set_raw_mode() {
     stty -echo -icanon time 0 min 1 isig 2>/dev/null
 }
@@ -635,7 +680,8 @@ SPINNER_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 show_spinner() {
     local message="$1"
     local delay=0.1
-    tput civis 2>/dev/null  # Hide cursor
+    # Gecachte tput-Variable nutzen statt direktem tput-Aufruf zur Laufzeit
+    if [ -n "${TPUT_CIVIS:-}" ]; then echo -ne "$TPUT_CIVIS"; else tput civis 2>/dev/null; fi
     (
         local i=0
         while true; do
@@ -651,10 +697,14 @@ show_spinner() {
 stop_spinner() {
     if [ -n "$SPINNER_PID" ]; then
         kill "$SPINNER_PID" 2>/dev/null
-        wait "$SPINNER_PID" 2>/dev/null
+        # wait returns the killed process's exit code (128+signal) which is non-zero.
+        # || true prevents set -e from aborting when stop_spinner is called at the
+        # top level (e.g. --across mode) where set -e is still active.
+        wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
         printf "\r%80s\r" " "  # Clear spinner line
-        tput cnorm 2>/dev/null  # Show cursor
+        # Gecachte tput-Variable nutzen
+        if [ -n "${TPUT_CNORM:-}" ]; then echo -ne "$TPUT_CNORM"; else tput cnorm 2>/dev/null; fi
     fi
 }
 
@@ -741,7 +791,8 @@ clear_cache() {
 save_state() {
     local cf
     cf=$(get_cache_file)
-    mkdir -p "$(dirname "$cf")" 2>/dev/null || true
+    # Bash string-op instead of $(dirname) subshell: cf is always $CACHE_DIR/state_HASH
+    mkdir -p "${cf%/*}" 2>/dev/null || true
     if ! echo "$selected_index" > "$cf" 2>/dev/null; then
         echo "WARN: failed to save state to $cf" >&2
     fi
@@ -751,7 +802,8 @@ load_state() {
     local c
     c=$(get_cache_file)
     if [ -f "$c" ]; then
-        selected_index=$(cat "$c")
+        # read statt cat: kein Subshell-Fork für eine einzelne Zeile
+        { read -r selected_index < "$c"; } 2>/dev/null || true
     fi
 }
 
@@ -1093,7 +1145,9 @@ save_search_term() {
 
 get_search_history() {
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        tac "$SEARCH_HISTORY_FILE" 2>/dev/null || tail -r "$SEARCH_HISTORY_FILE" 2>/dev/null || true
+        # tail -r ist auf macOS/BSD nativ verfügbar; tac nur mit GNU coreutils.
+        # Reihenfolge: macOS-first, kein nutzloser fork für 'tac: command not found'.
+        tail -r "$SEARCH_HISTORY_FILE" 2>/dev/null || tac "$SEARCH_HISTORY_FILE" 2>/dev/null || true
     fi
 }
 
@@ -1295,30 +1349,37 @@ toggle_favorite() {
 show_favorites() {
     clear
     echo -e "${COLOR_HEAD}⭐ Favorite Tasks${COLOR_RESET}"
-    
-    if [ ! -f "$RUN_FAVORITES_FILE" ] || [ ! -s "$RUN_FAVORITES_FILE" ]; then
+
+    # Datei einmalig in Array lesen — kein sed-Fork pro Tastendruck
+    local -a fav_list=()
+    if [ -f "$RUN_FAVORITES_FILE" ] && [ -s "$RUN_FAVORITES_FILE" ]; then
+        while IFS= read -r _fline || [ -n "$_fline" ]; do
+            [ -n "$_fline" ] && fav_list+=("$_fline")
+        done < "$RUN_FAVORITES_FILE"
+    fi
+
+    if [ "${#fav_list[@]}" -eq 0 ]; then
         echo -e "${COLOR_DIM}No favorites yet. Press [*] on a task to add it!${COLOR_RESET}"
     else
         echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
         local idx=1
-        while IFS= read -r fav_name; do
+        for _fav in "${fav_list[@]}"; do
             if [ "$idx" -le 9 ]; then
-                printf "%d) ${COLOR_SEL}%s${COLOR_RESET}\n" "$idx" "$fav_name"
+                printf "%d) ${COLOR_SEL}%s${COLOR_RESET}\n" "$idx" "$_fav"
             else
-                printf "  ${COLOR_DIM}%s${COLOR_RESET}\n" "$fav_name"
+                printf "  ${COLOR_DIM}%s${COLOR_RESET}\n" "$_fav"
             fi
             idx=$((idx + 1))
-        done < "$RUN_FAVORITES_FILE"
+        done
     fi
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
-    
+
     while true; do
         key=$(read_key) || break
         if [[ "$key" =~ [1-9] ]]; then
             local sel=$((key - 1))
-            local fav_name
-            fav_name=$(sed -n "$((sel + 1))p" "$RUN_FAVORITES_FILE" 2>/dev/null)
+            local fav_name="${fav_list[$sel]:-}"  # Array-Index statt sed-Fork
             if [ -n "$fav_name" ]; then
                 if find_task_in_menu "$fav_name" "_execute_fav_callback"; then
                     clear
@@ -1490,7 +1551,7 @@ show_logs() {
                 local sel=$((key - 1))
                 if [ "$sel" -lt "${#log_files[@]}" ]; then
                     clear
-                    echo -e "${COLOR_HEAD}Log: $(basename "${log_files[$sel]}")${COLOR_RESET}"
+                    echo -e "${COLOR_HEAD}Log: ${log_files[$sel]##*/}${COLOR_RESET}"
                     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
                     cat "${log_files[$sel]}"
                     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
@@ -1539,8 +1600,8 @@ execute_task_deps() {
             dep=$(trim_whitespace "$dep")
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
             
-            # Create log file for this dependency
-            local dep_log="/tmp/run_dep_${dep}_$$.log"
+            # Log in CACHE_DIR ablegen — wird bei EXIT automatisch bereinigt
+            local dep_log="${CACHE_DIR}/dep_${dep}_$$.log"
             dep_logs+=("$dep_log")
             dep_names+=("$dep")
             
@@ -1623,8 +1684,8 @@ execute_multi_profile_task() {
             prof=$(trim_whitespace "$prof")
             echo -e "  ${COLOR_DIM}→ [$prof] $task_name${COLOR_RESET}"
             
-            # Create log file for this profile execution
-            local prof_log="/tmp/run_multi_prof_${prof}_$$.log"
+            # Log in CACHE_DIR ablegen — wird bei EXIT automatisch bereinigt
+            local prof_log="${CACHE_DIR}/multi_prof_${prof}_$$.log"
             profile_logs+=("$prof_log")
             profile_names+=("$prof")
             
@@ -1897,10 +1958,13 @@ preview_task() {
 select_dropdown() {
     local options_str="$1"
     local -a options=()
-    # mapfile (readarray) ist Bash 4+; auf macOS läuft /bin/bash 3.2 → portabler while-Loop
-    while IFS= read -r _opt; do
+    # IFS-Split statt printf|tr-Pipeline: kein Fork, Bash 3.2-kompatibel
+    local -a _raw_opts
+    IFS=',' read -r -a _raw_opts <<< "$options_str"
+    local _opt
+    for _opt in "${_raw_opts[@]}"; do
         [ -n "$_opt" ] && options+=("$_opt")
-    done < <(printf '%s\n' "$options_str" | tr ',' '\n')
+    done
     local selected=0
     local num=${#options[@]}
     
@@ -1929,7 +1993,7 @@ select_dropdown() {
             $'\x1b[B'|$'\x1bOB') selected=$((selected + 1));;
             $'\x1b') return 1;; # Pure Escape = cancel
             "k") selected=$((selected - 1));; "j") selected=$((selected + 1));;
-            "") echo "${options[$selected]}"; return 0;;
+            $'\r'|"") echo "${options[$selected]}"; return 0;; # Enter
         esac
         if [ "$selected" -lt 0 ]; then
             selected=$((num-1))
@@ -1976,7 +2040,7 @@ process_progress_output() {
     
     # Return line normally if no progress marker
     echo "$line"
-    return 1
+    return 0  # 0 statt 1: stabiler bei set -e, semantisch korrekt (kein Fehler)
 }
 
 execute_task_pipeline() {
@@ -2155,12 +2219,12 @@ execute_task() {
     local log_file
     log_file=$(create_log_file "$name")
     local temp_output=""
-    temp_output=$(mktemp)
+    temp_output=$(mktemp) || { echo -e "${COLOR_ERR}Cannot create temp file${COLOR_RESET}"; return 1; }
     trap '[[ -n "${temp_output:-}" ]] && rm -f "$temp_output"' RETURN
-    
-    # dirname einmal cachen – vermeidet wiederholte Subshell-Aufrufe
-    local config_dir
-    config_dir=$(dirname "$config_path")
+
+    # Bash string-op instead of $(dirname) subshell (called on every task execution)
+    local config_dir="${config_path%/*}"
+    [ "$config_dir" = "$config_path" ] && config_dir="."
     # Ersten Token prüfen (Schutz vor kaputten Kommandos)
     local first_token="${cmd%% *}"
     if [ -n "$first_token" ] && ! command -v "$first_token" >/dev/null 2>&1 && [[ "$first_token" != */* ]]; then
@@ -2290,7 +2354,8 @@ expand_env_vars() {
         guard=$((guard + 1))
         [ "$guard" -gt 50 ] && break
     done
-    echo "$out"
+    # printf statt echo: sicher gegen Werte die mit -e/-n beginnen (z.B. "-n" als Env-Var)
+    printf '%s\n' "$out"
 }
 
 
@@ -2324,20 +2389,31 @@ extract_field_from_grep() {
 # Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
-    local cols=1
-    local rows="$total"
     local term_width="${TPUT_COLS:-80}"
+    local min_col_width="${COLS_MIN_WIDTH:-30}"
+    local max_cols="${COLS_MAX:-4}"
+    local min_cols="${COLS_MIN:-1}"
 
-    if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
-        cols=3
-        rows=$(( (total + cols - 1) / cols ))
-    elif [ "$total" -gt 6 ] && [ "$term_width" -ge 100 ] && [ "$COLS_MAX" -ge 2 ]; then
-        cols=2
-        rows=$(( (total + cols - 1) / cols ))
+    # Derive column count from terminal width
+    local cols=$(( term_width / min_col_width ))
+
+    # Apply COLS_MAX (0 = unlimited)
+    if [ "$max_cols" -gt 0 ] && [ "$cols" -gt "$max_cols" ]; then
+        cols="$max_cols"
     fi
 
-    [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
-    [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
+    # Don't use more columns than makes sense (at least 2 items per column)
+    if [ "$total" -gt 0 ]; then
+        local max_useful=$(( (total + 1) / 2 ))
+        [ "$cols" -gt "$max_useful" ] && cols="$max_useful"
+    fi
+
+    # Apply minimum column count
+    [ "$cols" -lt "$min_cols" ] && cols="$min_cols"
+    [ "$cols" -lt 1 ] && cols=1
+
+    local rows=$(( (total + cols - 1) / cols ))
+    [ "$rows" -lt 1 ] && rows=1
 
     _layout_rows=$rows
     _layout_cols=$cols
@@ -2483,8 +2559,12 @@ draw_menu() {
     local mode_indicator="[${active_mode}]"
     local profile_name=""
     if [ "$active_mode" = "global" ] && [ -f "$config_path" ]; then
-        profile_name=$(basename "$config_path" .tasks)
-        [ "$profile_name" != ".tasks" ] && mode_indicator="[${profile_name}]"
+        # Bash string-ops: no $(basename) subshell in hot render path.
+        # .tasks.docker → strip dir → .tasks.docker → strip .tasks prefix → .docker → strip dot → docker
+        local _bn="${config_path##*/}"
+        profile_name="${_bn##.tasks}"   # strip .tasks prefix (→ .docker or "")
+        profile_name="${profile_name#.}" # strip leading dot  (→ docker  or "")
+        [ -n "$profile_name" ] && mode_indicator="[${profile_name}]"
     fi
     
     echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
@@ -2622,10 +2702,13 @@ main_interactive_loop() {
         # ══════════════════════════════════════════════════════════════
         #  KEYBOARD INPUT HANDLING
         # ══════════════════════════════════════════════════════════════
-        local key=""
+        local key="" _rk_status=0
         if [ "$is_interactive" -eq 1 ]; then
-            # Optimized read without repeatedly calling stty
-            key=$(read_key_raw) || key=""
+            # Capture exit status separately: command substitution strips trailing \n,
+            # so a real Enter (\n) correctly becomes "".  But if read_key_raw fails
+            # (e.g. EINTR from a signal), we must NOT treat the empty result as Enter.
+            key=$(read_key_raw); _rk_status=$?
+            [ "$_rk_status" -ne 0 ] && continue
         else
             # Non-interactive: read line (for SSH without TTY)
             read -r key || break
@@ -2710,7 +2793,7 @@ main_interactive_loop() {
             "!") run_with_term_paused show_history; redraw_needed=1;;
             "a"|"A") run_with_term_paused show_alias_editor; redraw_needed=1;;
             "?") run_with_term_paused show_help_panel; redraw_needed=1;;
-            $'\r'|$'\n'|"") # ENTER key (BUG-FIX: Accept both \r and \n)
+            $'\r'|$'\n'|"") # ENTER: \r = raw CR, \n = LF, "" = \n stripped by $()
                 set +u
                 [ ${#menu_options[@]} -eq 0 ] && { set -u; continue; }
                 
@@ -3034,7 +3117,8 @@ EOF
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
-        grep -v "^#" "$ALIAS_FILE" | grep -v "^$" || true
+        # Einzelner grep statt zwei Pipes — spart einen Fork
+        grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
         echo ""
         echo "1) Edit aliases"
         echo "2) Add new alias"
@@ -3167,11 +3251,12 @@ self_update() {
     local tmp_file
     tmp_file=$(mktemp /tmp/run_update.XXXXXX) || { echo -e "${COLOR_ERR}$(msg temp_file_fail)${COLOR_RESET}"; return 1; }
     if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
-        if [ -n "$RUN_EXPECTED_SHA256" ]; then
+        # ${RUN_EXPECTED_SHA256:-} guards against 'unbound variable' with set -u
+        if [ -n "${RUN_EXPECTED_SHA256:-}" ]; then
             local dl_hash=""
             dl_hash=$(file_sha256 "$tmp_file") || echo -e "${COLOR_WARN}$(msg hash_skipped)${COLOR_RESET}"
-            if [ -n "$dl_hash" ] && [ "$dl_hash" != "$RUN_EXPECTED_SHA256" ]; then
-                echo -e "${COLOR_ERR}$(msg hash_mismatch) $RUN_EXPECTED_SHA256 != $dl_hash${COLOR_RESET}"
+            if [ -n "$dl_hash" ] && [ "$dl_hash" != "${RUN_EXPECTED_SHA256:-}" ]; then
+                echo -e "${COLOR_ERR}$(msg hash_mismatch) ${RUN_EXPECTED_SHA256:-} != $dl_hash${COLOR_RESET}"
                 rm -f "$tmp_file"
                 return 1
             fi
@@ -3511,10 +3596,13 @@ if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
-        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+        # Bash-String-Op statt echo|tr-Pipe (kein Fork)
+        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         echo -e "${COLOR_DIM}Press [p] to choose a profile or any other key to continue...${COLOR_RESET}"
         key=$(read_key) || key=""
-        sleep 0.1
+        # Drain any remaining bytes (arrow-key sequences etc.) so they don't
+        # leak into the main interactive loop that starts afterwards.
+        drain_stdin
         if [ "$key" = "p" ] || [ "$key" = "P" ]; then
             select_profile_menu || true
         fi
@@ -3540,7 +3628,7 @@ if [ "${#args[@]}" -gt 0 ]; then
         echo -e "${COLOR_WARN}Profile '$profile' not found. Using default config.${COLOR_RESET}"
         profiles_list=$(list_available_profiles)
         if [ -n "$profiles_list" ]; then
-            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} $(echo "$profiles_list" | tr '\n' ' ')"
+            echo -e "${COLOR_INFO}Available profiles:${COLOR_RESET} ${profiles_list//$'\n'/ }"
         fi
     fi
 else
@@ -3588,4 +3676,3 @@ redraw_needed=1
 
 # Main interactive loop is in 13-ui.sh
 main_interactive_loop
-

@@ -88,16 +88,22 @@ DEBUG_MODE=0
 readonly DEFAULT_LANG="DE"
 readonly DEFAULT_THEME="CYBER"
 readonly DEFAULT_COLS_MIN=1
-readonly DEFAULT_COLS_MAX=3
+readonly DEFAULT_COLS_MAX=4
+readonly DEFAULT_COLS_MIN_WIDTH=30
+readonly DEFAULT_CONTEXT_SHOW="git,hostname,env"
 UI_LANG="$DEFAULT_LANG"
 UI_THEME="$DEFAULT_THEME"
 COLS_MIN="$DEFAULT_COLS_MIN"
 COLS_MAX="$DEFAULT_COLS_MAX"
+COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 TASK_THEME=""
 SETTINGS_THEME=""
 SETTINGS_LANG=""
 SETTINGS_COLS_MIN=""
 SETTINGS_COLS_MAX=""
+SETTINGS_COLS_MIN_WIDTH=""
+SETTINGS_CONTEXT_SHOW=""
 
 # ==============================================================================
 #  CONFIG FILE PARSING
@@ -138,10 +144,12 @@ parse_settings_file() {
         local key="${line%%=*}"
         local value="${line#*=}"
         case "$key" in
-            THEME) SETTINGS_THEME="$value" ;;
-            LANG) SETTINGS_LANG="$value" ;;
-            COLS_MIN) SETTINGS_COLS_MIN="$value" ;;
-            COLS_MAX) SETTINGS_COLS_MAX="$value" ;;
+            THEME)          SETTINGS_THEME="$value" ;;
+            LANG)           SETTINGS_LANG="$value" ;;
+            COLS_MIN)       SETTINGS_COLS_MIN="$value" ;;
+            COLS_MAX)       SETTINGS_COLS_MAX="$value" ;;
+            COLS_MIN_WIDTH) SETTINGS_COLS_MIN_WIDTH="$value" ;;
+            CONTEXT_SHOW)   SETTINGS_CONTEXT_SHOW="$value" ;;
         esac
     done < "$file"
 }
@@ -151,21 +159,27 @@ resolve_settings() {
     UI_THEME="$DEFAULT_THEME"
     COLS_MIN="$DEFAULT_COLS_MIN"
     COLS_MAX="$DEFAULT_COLS_MAX"
+    COLS_MIN_WIDTH="$DEFAULT_COLS_MIN_WIDTH"
+    CONTEXT_SHOW="$DEFAULT_CONTEXT_SHOW"
 
-    [ -n "$SETTINGS_LANG" ] && UI_LANG="$SETTINGS_LANG"
+    [ -n "$SETTINGS_LANG" ]          && UI_LANG="$SETTINGS_LANG"
     if [ -n "$SETTINGS_THEME" ]; then
         UI_THEME="$SETTINGS_THEME"
     elif [ -n "$TASK_THEME" ]; then
         UI_THEME="$TASK_THEME"
     fi
-    [ -n "$SETTINGS_COLS_MIN" ] && COLS_MIN="$SETTINGS_COLS_MIN"
-    [ -n "$SETTINGS_COLS_MAX" ] && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN" ]       && COLS_MIN="$SETTINGS_COLS_MIN"
+    [ -n "$SETTINGS_COLS_MAX" ]       && COLS_MAX="$SETTINGS_COLS_MAX"
+    [ -n "$SETTINGS_COLS_MIN_WIDTH" ] && COLS_MIN_WIDTH="$SETTINGS_COLS_MIN_WIDTH"
+    [ -n "$SETTINGS_CONTEXT_SHOW" ]   && CONTEXT_SHOW="$SETTINGS_CONTEXT_SHOW"
 
     return 0
 }
 
 load_settings() {
-    SETTINGS_THEME=""; SETTINGS_LANG=""; SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_THEME=""; SETTINGS_LANG=""
+    SETTINGS_COLS_MIN=""; SETTINGS_COLS_MAX=""
+    SETTINGS_COLS_MIN_WIDTH=""; SETTINGS_CONTEXT_SHOW=""
     parse_settings_file "$GLOBAL_SETTINGS"
     parse_settings_file "$(get_local_settings_path)"
     resolve_settings
@@ -181,6 +195,8 @@ THEME=$UI_THEME
 LANG=$UI_LANG
 COLS_MIN=$COLS_MIN
 COLS_MAX=$COLS_MAX
+COLS_MIN_WIDTH=$COLS_MIN_WIDTH
+CONTEXT_SHOW=$CONTEXT_SHOW
 EOF
 }
 
@@ -2373,20 +2389,31 @@ extract_field_from_grep() {
 # Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
-    local cols=1
-    local rows="$total"
     local term_width="${TPUT_COLS:-80}"
+    local min_col_width="${COLS_MIN_WIDTH:-30}"
+    local max_cols="${COLS_MAX:-4}"
+    local min_cols="${COLS_MIN:-1}"
 
-    if [ "$total" -gt 12 ] && [ "$term_width" -ge 120 ] && [ "$COLS_MAX" -ge 3 ]; then
-        cols=3
-        rows=$(( (total + cols - 1) / cols ))
-    elif [ "$total" -gt 6 ] && [ "$term_width" -ge 100 ] && [ "$COLS_MAX" -ge 2 ]; then
-        cols=2
-        rows=$(( (total + cols - 1) / cols ))
+    # Derive column count from terminal width
+    local cols=$(( term_width / min_col_width ))
+
+    # Apply COLS_MAX (0 = unlimited)
+    if [ "$max_cols" -gt 0 ] && [ "$cols" -gt "$max_cols" ]; then
+        cols="$max_cols"
     fi
 
-    [ "$cols" -lt "$COLS_MIN" ] && cols="$COLS_MIN"
-    [ "$cols" -gt "$COLS_MAX" ] && cols="$COLS_MAX"
+    # Don't use more columns than makes sense (at least 2 items per column)
+    if [ "$total" -gt 0 ]; then
+        local max_useful=$(( (total + 1) / 2 ))
+        [ "$cols" -gt "$max_useful" ] && cols="$max_useful"
+    fi
+
+    # Apply minimum column count
+    [ "$cols" -lt "$min_cols" ] && cols="$min_cols"
+    [ "$cols" -lt 1 ] && cols=1
+
+    local rows=$(( (total + cols - 1) / cols ))
+    [ "$rows" -lt 1 ] && rows=1
 
     _layout_rows=$rows
     _layout_cols=$cols
