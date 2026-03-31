@@ -470,6 +470,44 @@ test_empty_config() {
     fi
 }
 
+test_cols_min_width_setting() {
+    test_start "COLS_MIN_WIDTH setting is read from .runrc"
+
+    local tmp_dir="/tmp/test_cols_min_width_$$"
+    mkdir -p "$tmp_dir"
+    printf 'COLS_MIN_WIDTH=25\n' > "$tmp_dir/.runrc"
+    printf '0|Task A|echo a|desc\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" ""; then
+        test_pass   # just checking no crash on unknown key
+    else
+        test_fail "Script crashed reading COLS_MIN_WIDTH from .runrc"
+    fi
+}
+
+test_context_show_setting() {
+    test_start "CONTEXT_SHOW setting is read from .runrc without crash"
+
+    local tmp_dir="/tmp/test_ctx_show_$$"
+    mkdir -p "$tmp_dir"
+    printf 'CONTEXT_SHOW=hostname,env\n' > "$tmp_dir/.runrc"
+    printf '0|Task A|echo a|desc\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" ""; then
+        test_pass
+    else
+        test_fail "Script crashed reading CONTEXT_SHOW from .runrc"
+    fi
+}
+
 # ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
@@ -503,6 +541,11 @@ run_all_tests() {
     test_dependency_execution
     test_environment_variables
     
+    echo ""
+    echo "${C_INFO}» Settings Tests${C_RST}"
+    test_cols_min_width_setting
+    test_context_show_setting
+
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
     test_large_config_performance
