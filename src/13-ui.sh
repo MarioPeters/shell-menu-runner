@@ -257,7 +257,9 @@ draw_menu() {
 
             # Truncate name to fit
             if [ "${#_name}" -gt "$name_max" ]; then
-                _name="${_name:0:$((name_max-3))}..."
+                local _trunc=$(( name_max - 3 ))
+                [ "$_trunc" -lt 1 ] && _trunc=1
+                _name="${_name:0:$_trunc}..."
             fi
             # Pad name to name_max chars — printf -v avoids subshell
             local _padded
