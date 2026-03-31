@@ -353,6 +353,28 @@ execute_task() {
 }
 
 # ==============================================================================
+#  CLI MODE (non-interactive --list / --run)
+# ==============================================================================
+
+# shellcheck disable=SC2034
+_cli_matches=()   # populated by cli_match_tasks(); array of matching indices
+
+cli_list_tasks() {
+    local total=${#menu_options[@]}
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found."
+        return 0
+    fi
+    echo "Tasks ($total)"
+    local i _lvl _name _cmd _desc
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        local num=$(( i + 1 ))
+        printf "  %2d)  %-22s  %s\n" "$num" "${_name:0:22}" "$_desc"
+    done
+}
+
+# ==============================================================================
 #  UTILITY HELPERS
 # ==============================================================================
 

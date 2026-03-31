@@ -28,6 +28,11 @@ ssh_hint_shown=0
 last_config_mtime=0
 cached_menu_options=""
 DEBUG_MODE=0
+# shellcheck disable=SC2034
+cli_mode=0          # 1 when --run is active; skips interactive prompts in execute_task
+# shellcheck disable=SC2034
+cli_run_query=""    # query string passed to --run
+cli_list_mode=0     # 1 when --list is active
 
 # --- SETTINGS STATE ---
 readonly DEFAULT_LANG="DE"

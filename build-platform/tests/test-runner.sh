@@ -203,13 +203,6 @@ test_dry_run_mode() {
     test_skip "DRY-RUN only available interactively"
 }
 
-test_list_tasks() {
-    test_start "List tasks"
-    
-    # Skip test - run.sh has no --list flag (interactive mode only)
-    test_skip "Task listing only available in interactive mode"
-}
-
 test_task_execution() {
     test_start "Task execution"
     
@@ -451,22 +444,20 @@ EOF
 
 test_empty_config() {
     test_start "Empty config handling"
-    
-    local test_config="/tmp/test_empty_$$"
-    touch "$test_config"
-    
-    set +e
-    "$RUN_SCRIPT" --config "$test_config" --list >/dev/null 2>&1
-    local exit_code=$?
-    set -e
-    
-    rm -f "$test_config"
-    
-    # Should handle gracefully (non-zero but no crash)
-    if [ $exit_code -ne 0 ]; then
+
+    local tmp_dir="/tmp/test_empty_$$"
+    mkdir -p "$tmp_dir"
+    touch "$tmp_dir/.tasks"
+
+    local output exit_code=0
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --list 2>&1) || exit_code=$?
+    rm -rf "$tmp_dir"
+
+    # --list with empty config should print "No tasks found." and exit 0
+    if [ "$exit_code" -eq 0 ] && echo "$output" | grep -q "No tasks found"; then
         test_pass
     else
-        test_fail "Empty config should be detected"
+        test_fail "Expected 'No tasks found.' and exit 0, got: exit=$exit_code output=$output"
     fi
 }
 
@@ -653,6 +644,47 @@ test_draw_menu_help_intact() {
 }
 
 # ==============================================================================
+#  CLI MODE TESTS
+# ==============================================================================
+
+test_cli_list_shows_tasks() {
+    test_start "cli --list: shows numbered task list"
+
+    local tmp_dir="/tmp/test_cli_list_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|Build Project|make build|Build the project\n' > "$tmp_dir/.tasks"
+    printf '0|Run Tests|make test|Run the test suite\n'    >> "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --list 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "Build Project" && assert_contains "$output" "Run Tests"; then
+        test_pass
+    else
+        test_fail "Expected task names in --list output, got: $output"
+    fi
+}
+
+test_cli_list_empty() {
+    test_start "cli --list: shows 'No tasks found' for empty config"
+
+    local tmp_dir="/tmp/test_cli_list_empty_$$"
+    mkdir -p "$tmp_dir"
+    printf '' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --list 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "No tasks found"; then
+        test_pass
+    else
+        test_fail "Expected 'No tasks found', got: $output"
+    fi
+}
+
+# ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
 
@@ -673,7 +705,6 @@ run_all_tests() {
     test_version_flag
     test_invalid_flag
     test_dry_run_mode
-    test_list_tasks
     test_task_execution
     test_config_validation
     test_profile_detection
@@ -710,6 +741,11 @@ run_all_tests() {
     echo "${C_INFO}» Draw Menu Tests${C_RST}"
     test_draw_menu_build_integrity
     test_draw_menu_help_intact
+
+    echo ""
+    echo "${C_INFO}» CLI Mode Tests${C_RST}"
+    test_cli_list_shows_tasks
+    test_cli_list_empty
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
