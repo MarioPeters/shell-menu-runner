@@ -238,7 +238,12 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [--init|--analyze|--global|--edit|--update|--debug] [profile]"
+            echo "Usage: run [options] [profile]"
+            echo ""
+            echo "CLI Mode (no menu):"
+            echo "  run --list              List all tasks for current profile"
+            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
             echo "  run <name>              Load profile .tasks.<name>"
