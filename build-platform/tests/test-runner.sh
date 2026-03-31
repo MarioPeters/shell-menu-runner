@@ -628,6 +628,31 @@ test_build_border_strings() {
 }
 
 # ==============================================================================
+#  DRAW MENU TESTS
+# ==============================================================================
+
+test_draw_menu_build_integrity() {
+    test_start "draw_menu: build still produces valid run.sh after overhaul"
+    make -C "$ROOT_DIR" dev >/dev/null 2>&1
+    if assert_file_exists "$RUN_SCRIPT"; then
+        test_pass
+    else
+        test_fail "run.sh missing after build"
+    fi
+}
+
+test_draw_menu_help_intact() {
+    test_start "draw_menu: --help still works after overhaul"
+    local output
+    output=$("$RUN_SCRIPT" --help 2>&1 || true)
+    if assert_contains "$output" "Usage:"; then
+        test_pass
+    else
+        test_fail "Help broken after draw_menu overhaul: $output"
+    fi
+}
+
+# ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
 
@@ -680,6 +705,11 @@ run_all_tests() {
     echo ""
     echo "${C_INFO}» Border String Tests${C_RST}"
     test_build_border_strings
+
+    echo ""
+    echo "${C_INFO}» Draw Menu Tests${C_RST}"
+    test_draw_menu_build_integrity
+    test_draw_menu_help_intact
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"

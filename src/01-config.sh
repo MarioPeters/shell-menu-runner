@@ -5,7 +5,7 @@
 # --- THEME CONFIGURATION ---
 COLOR_HEAD=$'\e[1;34m'; COLOR_SEL=$'\e[1;32m'; COLOR_ERR=$'\e[1;31m'
 COLOR_WARN=$'\e[1;33m'; COLOR_INFO=$'\e[33m';  COLOR_DIM=$'\e[2m'
-COLOR_RESET=$'\e[0m'
+COLOR_RESET=$'\e[0m';   COLOR_BOLD=$'\e[0;1m'
 
 # --- GLOBAL STATE ---
 current_level=0
