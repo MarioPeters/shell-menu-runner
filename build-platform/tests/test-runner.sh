@@ -684,6 +684,75 @@ test_cli_list_empty() {
     fi
 }
 
+_run_cli_match() {
+    # Args: query
+    bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        menu_options=('0|Build Project|make build|Build' '0|Run Tests|make test|Tests' '0|Build Docker|docker build .|Docker')
+        source '$ROOT_DIR/src/12-execution.sh' 2>/dev/null
+        cli_match_tasks '$1' 2>/dev/null
+        rc=\$?
+        echo \"\${_cli_matches[*]} rc=\$rc\"
+    "
+}
+
+test_cli_match_by_number() {
+    test_start "cli_match_tasks: numeric query returns correct index"
+    local result
+    result=$(_run_cli_match 2)
+    if assert_contains "$result" "1 rc=0"; then
+        test_pass
+    else
+        test_fail "Expected '1 rc=0' (index 1 = task 2), got: '$result'"
+    fi
+}
+
+test_cli_match_exact_name() {
+    test_start "cli_match_tasks: exact name match (case-insensitive)"
+    local result
+    result=$(_run_cli_match "run tests")
+    if assert_contains "$result" "1 rc=0"; then
+        test_pass
+    else
+        test_fail "Expected index 1 for 'run tests', got: '$result'"
+    fi
+}
+
+test_cli_match_substring() {
+    test_start "cli_match_tasks: substring match returns all hits"
+    local result
+    result=$(_run_cli_match "build")
+    # "Build Project" (idx 0) and "Build Docker" (idx 2) both match
+    if assert_contains "$result" "0" && assert_contains "$result" "2"; then
+        test_pass
+    else
+        test_fail "Expected indices 0 and 2 for 'build', got: '$result'"
+    fi
+}
+
+test_cli_match_no_match() {
+    test_start "cli_match_tasks: no match returns exit 1"
+    local result
+    result=$(_run_cli_match "zzznomatch")
+    if assert_contains "$result" "rc=1"; then
+        test_pass
+    else
+        test_fail "Expected rc=1 for no match, got: '$result'"
+    fi
+}
+
+test_cli_match_out_of_range() {
+    test_start "cli_match_tasks: out-of-range number returns exit 1"
+    local result
+    result=$(_run_cli_match 99)
+    if assert_contains "$result" "rc=1"; then
+        test_pass
+    else
+        test_fail "Expected rc=1 for out-of-range number, got: '$result'"
+    fi
+}
+
 # ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
@@ -746,6 +815,11 @@ run_all_tests() {
     echo "${C_INFO}» CLI Mode Tests${C_RST}"
     test_cli_list_shows_tasks
     test_cli_list_empty
+    test_cli_match_by_number
+    test_cli_match_exact_name
+    test_cli_match_substring
+    test_cli_match_no_match
+    test_cli_match_out_of_range
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"

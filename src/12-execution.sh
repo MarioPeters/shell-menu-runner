@@ -359,6 +359,47 @@ execute_task() {
 # shellcheck disable=SC2034
 _cli_matches=()   # populated by cli_match_tasks(); array of matching indices
 
+cli_match_tasks() {
+    local query="$1"
+    _cli_matches=()
+    local total=${#menu_options[@]}
+
+    # Numeric query: direct 1-based index lookup
+    if [[ "$query" =~ ^[0-9]+$ ]]; then
+        local idx=$(( query - 1 ))
+        if [ "$idx" -lt 0 ] || [ "$idx" -ge "$total" ]; then
+            echo "Task number $query out of range (1–$total)" >&2
+            return 1
+        fi
+        _cli_matches=("$idx")
+        return 0
+    fi
+
+    local query_lower i _lvl _name _cmd _desc name_lower
+    query_lower=$(tr '[:upper:]' '[:lower:]' <<< "$query")
+
+    # Pass 1: exact name match (case-insensitive full string)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [ "$name_lower" = "$query_lower" ] && _cli_matches+=("$i")
+    done
+    [ "${#_cli_matches[@]}" -gt 0 ] && return 0
+
+    # Pass 2: substring match (case-insensitive)
+    for (( i=0; i<total; i++ )); do
+        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
+        [[ "$name_lower" == *"$query_lower"* ]] && _cli_matches+=("$i")
+    done
+
+    if [ "${#_cli_matches[@]}" -eq 0 ]; then
+        echo "No task found matching '$query'" >&2
+        return 1
+    fi
+    return 0
+}
+
 cli_list_tasks() {
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
