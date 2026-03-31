@@ -329,6 +329,16 @@ while [[ $# -gt 0 ]]; do
             edit_config_menu "$config_path"
             exit 0
             ;;
+        --run)
+            shift
+            cli_run_query="${1:-}"
+            if [ -z "$cli_run_query" ]; then
+                echo "Usage: --run <name-or-number>" >&2
+                exit 1
+            fi
+            cli_mode=1
+            shift
+            ;;
         --list)
             cli_list_mode=1
             shift
@@ -356,7 +366,7 @@ if [ "$DEBUG_MODE" -eq 1 ]; then
 fi
 
 set +u  # Disable nounset for array check
-if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ]; then
+if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
     set -u  # Re-enable nounset
     profiles_list=$(list_available_profiles)
     if [ -n "$profiles_list" ]; then
@@ -442,6 +452,10 @@ redraw_needed=1
 if [ "${cli_list_mode:-0}" -eq 1 ]; then
     cli_list_tasks
     exit 0
+fi
+if [ -n "${cli_run_query:-}" ]; then
+    cli_run_task "$cli_run_query"
+    exit $?
 fi
 
 # Main interactive loop is in 13-ui.sh

@@ -753,6 +753,78 @@ test_cli_match_out_of_range() {
     fi
 }
 
+test_cli_run_by_number() {
+    test_start "cli --run: executes task by number, shows output"
+
+    local tmp_dir="/tmp/test_cli_run_num_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|Echo Task|printf hello_from_task|Test task\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --run 1 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "hello_from_task"; then
+        test_pass
+    else
+        test_fail "Expected 'hello_from_task' in output, got: $output"
+    fi
+}
+
+test_cli_run_by_name() {
+    test_start "cli --run: executes task by fuzzy name"
+
+    local tmp_dir="/tmp/test_cli_run_name_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|Deploy Staging|printf deploy_done|Deploy task\n' > "$tmp_dir/.tasks"
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --run deploy 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "deploy_done"; then
+        test_pass
+    else
+        test_fail "Expected 'deploy_done' in output, got: $output"
+    fi
+}
+
+test_cli_run_not_found() {
+    test_start "cli --run: exits 1 when no task matches"
+
+    local tmp_dir="/tmp/test_cli_not_found_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|Build|make build|Build\n' > "$tmp_dir/.tasks"
+
+    local exit_code=0
+    (cd "$tmp_dir" && "$RUN_SCRIPT" --run "zzznomatch" > /dev/null 2>&1) || exit_code=$?
+    rm -rf "$tmp_dir"
+
+    if assert_exit_code 1 "$exit_code"; then
+        test_pass
+    else
+        test_fail "Expected exit code 1 for no match, got: $exit_code"
+    fi
+}
+
+test_cli_run_exit_code() {
+    test_start "cli --run: propagates task exit code"
+
+    local tmp_dir="/tmp/test_cli_exit_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|Fail Task|exit 42|Task that fails\n' > "$tmp_dir/.tasks"
+
+    local exit_code=0
+    (cd "$tmp_dir" && "$RUN_SCRIPT" --run "Fail Task" > /dev/null 2>&1) || exit_code=$?
+    rm -rf "$tmp_dir"
+
+    if assert_exit_code 42 "$exit_code"; then
+        test_pass
+    else
+        test_fail "Expected exit code 42, got: $exit_code"
+    fi
+}
+
 # ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
@@ -820,6 +892,10 @@ run_all_tests() {
     test_cli_match_substring
     test_cli_match_no_match
     test_cli_match_out_of_range
+    test_cli_run_by_number
+    test_cli_run_by_name
+    test_cli_run_not_found
+    test_cli_run_exit_code
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"

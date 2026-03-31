@@ -199,8 +199,8 @@ execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
     dry_run_mode=0  # Reset dry-run flag
     
-    # Show preview if interactive
-    if [ "$is_interactive" -eq 1 ]; then
+    # Show preview if interactive and not in CLI mode
+    if [ "$is_interactive" -eq 1 ] && [ "${cli_mode:-0}" -eq 0 ]; then
         if ! preview_task "$cmd" "$name" "$desc"; then
             return  # User cancelled
         fi
@@ -336,20 +336,23 @@ execute_task() {
 
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
     
-    # Reset terminal state to clean state after task execution
-    # This prevents issues with arrow keys and terminal modes.
-    # Immediately re-disable echo after sane so arrow keys pressed between the
-    # log line and "Taste drücken..." are not echoed as [A / [B garbage.
-    stty sane 2>/dev/null || true
-    stty -echo 2>/dev/null || true
-    tput cnorm 2>/dev/null || true
-    # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
-    # typed during/after task execution) before the "press key" prompt.
-    drain_stdin
-    
     # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
-    echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+
+    # Interactive cleanup and keypress prompt — skipped in CLI mode
+    if [ "${cli_mode:-0}" -eq 0 ]; then
+        # Reset terminal state to clean state after task execution
+        # This prevents issues with arrow keys and terminal modes.
+        # Immediately re-disable echo after sane so arrow keys pressed between the
+        # log line and "Taste drücken..." are not echoed as [A / [B garbage.
+        stty sane 2>/dev/null || true
+        stty -echo 2>/dev/null || true
+        tput cnorm 2>/dev/null || true
+        # Drain any bytes the task may have left in stdin (e.g. arrow-key sequences
+        # typed during/after task execution) before the "press key" prompt.
+        drain_stdin
+        echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+    fi
 }
 
 # ==============================================================================
@@ -398,6 +401,65 @@ cli_match_tasks() {
         return 1
     fi
     return 0
+}
+
+cli_run_task() {
+    local query="$1"
+    local total=${#menu_options[@]}
+
+    if [ "$total" -eq 0 ]; then
+        echo "No tasks found." >&2
+        return 1
+    fi
+
+    if ! cli_match_tasks "$query"; then
+        return 1
+    fi
+
+    local match_count=${#_cli_matches[@]}
+    local chosen_idx
+
+    if [ "$match_count" -eq 1 ]; then
+        chosen_idx="${_cli_matches[0]}"
+    else
+        # Disambiguation: print matches, read single keypress
+        echo "Multiple matches for \"$query\":"
+        local j _lvl _name _cmd _desc
+        for (( j=0; j<match_count; j++ )); do
+            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[${_cli_matches[$j]}]}"
+            printf "  %d)  %s\n" "$(( j + 1 ))" "$_name"
+        done
+        echo ""
+        printf "Select [1-%d] or q to cancel: " "$match_count"
+
+        local key
+        while true; do
+            stty -icanon min 1 time 0 2>/dev/null
+            key=$(dd bs=1 count=1 2>/dev/null)
+            stty sane 2>/dev/null
+            case "$key" in
+                q|Q|$'\x1b')
+                    echo ""
+                    echo "Cancelled."
+                    return 0
+                    ;;
+                [1-9])
+                    local sel
+                    sel=$(( key - 1 ))
+                    if [ "$sel" -lt "$match_count" ]; then
+                        echo "$key"
+                        chosen_idx="${_cli_matches[$sel]}"
+                        break
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    local _lvl _name _cmd _desc
+    IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$chosen_idx]}"
+    execute_task "$_cmd" "$_name" "$_desc"
+    return $?
 }
 
 cli_list_tasks() {
