@@ -57,7 +57,7 @@ init_context() {
             case "$env_lower" in
                 production|prod) env_color="$COLOR_ERR"  ;;
                 staging|stg)     env_color="$COLOR_WARN" ;;
-                development|dev) env_color="$COLOR_SEL"  ;;
+                development|dev) env_color="$COLOR_INFO" ;;
                 *)               env_color="$COLOR_DIM"  ;;
             esac
             parts+=("${env_color}${env_upper}${COLOR_RESET}")
