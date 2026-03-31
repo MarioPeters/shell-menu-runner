@@ -584,6 +584,29 @@ test_calculate_layout_narrow_terminal() {
 }
 
 # ==============================================================================
+#  CONTEXT INDICATOR TESTS
+# ==============================================================================
+
+test_init_context_no_crash() {
+    test_start "init_context: runs without crash in non-git, non-SSH dir"
+
+    local tmp_dir="/tmp/test_ctx_$$"
+    mkdir -p "$tmp_dir"
+    printf '0|T|echo t|d\n' > "$tmp_dir/.tasks"
+
+    local output
+    # Run --version in a non-git dir; init_context is called during startup
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "1."; then
+        test_pass
+    else
+        test_fail "Script crashed during init_context: $output"
+    fi
+}
+
+# ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
 
@@ -628,6 +651,10 @@ run_all_tests() {
     test_calculate_layout_cols_max_cap
     test_calculate_layout_unlimited_cols
     test_calculate_layout_narrow_terminal
+
+    echo ""
+    echo "${C_INFO}» Context Indicator Tests${C_RST}"
+    test_init_context_no_crash
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
