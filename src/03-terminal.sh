@@ -9,6 +9,12 @@ _CTX_HOST=""
 _CTX_ENV=""
 _LAST_COL_WIDTH=0
 
+# Border string cache — rebuilt when col_width changes (WINCH trap resets _LAST_COL_WIDTH)
+# shellcheck disable=SC2034
+_BORDER_TOP=""
+# shellcheck disable=SC2034
+_BORDER_BOT=""
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
@@ -73,6 +79,20 @@ init_context() {
         done
         _CTX_LINE="$line"
     fi
+}
+
+build_border_strings() {
+    local col_width="$1"
+    local inner=$(( col_width - 4 ))
+    [ "$inner" -lt 1 ] && inner=1
+
+    # Build dash string with pure Bash loop — no subshell, no seq
+    local dashes="" i
+    for (( i=0; i<inner; i++ )); do dashes+='─'; done
+
+    _BORDER_TOP="┌${dashes}┐"
+    _BORDER_BOT="└${dashes}┘"
+    _LAST_COL_WIDTH="$col_width"
 }
 
 # Optimized terminal capability caching

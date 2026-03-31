@@ -606,6 +606,27 @@ test_init_context_no_crash() {
     fi
 }
 
+test_build_border_strings() {
+    test_start "build_border_strings: correct length for col_width=30"
+
+    local result
+    result=$(bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/03-terminal.sh' 2>/dev/null
+        _LAST_COL_WIDTH=0; _BORDER_TOP=''; _BORDER_BOT=''
+        build_border_strings 30
+        # inner = 30-4 = 26; box width = inner+2 = 28; top = ┌ + 26×─ + ┐
+        echo \"\${#_BORDER_TOP} \${#_BORDER_BOT} \$_LAST_COL_WIDTH\"
+    ")
+
+    if assert_equals "28 28 30" "$result"; then
+        test_pass
+    else
+        test_fail "Expected '28 28 30', got: '$result'"
+    fi
+}
+
 # ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
@@ -655,6 +676,10 @@ run_all_tests() {
     echo ""
     echo "${C_INFO}» Context Indicator Tests${C_RST}"
     test_init_context_no_crash
+
+    echo ""
+    echo "${C_INFO}» Border String Tests${C_RST}"
+    test_build_border_strings
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"
