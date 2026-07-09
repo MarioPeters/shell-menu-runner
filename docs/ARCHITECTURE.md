@@ -20,9 +20,9 @@ In-depth guide to the codebase for developers and contributors.
 
 **shell-menu-runner** is a Bash-based task automation framework built with these principles:
 
-- **Single file:** Entire codebase in `run.sh` (~2850 lines) - no external dependencies, universal distribution
+- **Modular source:** 17 modules in `src/` built into `run.sh` via `build.sh` — no external runtime dependencies, universal distribution
 - **Zero dependencies:** Works with only Bash 3.2+, runs anywhere
-- **Function-based:** 95+ named functions organized by feature category
+- **Function-based:** 95+ named functions organized by module
 - **Profile system:** Load different task sets via profiles
 - **POSIX-compatible:** Strict mode (`set -euo pipefail`) for reliability
 
@@ -32,30 +32,39 @@ In-depth guide to the codebase for developers and contributors.
 
 ```
 .
-├── run.sh              # Main application (2850+ lines, 95+ functions)
-├── install.sh          # Installation script (369 lines, generates 18 profiles)
-├── docs/
-│   ├── QUICK_START.md  # 5-minute beginner guide
-│   ├── ADVANCED_USAGE.md # Power-user recipes & patterns
-│   ├── TROUBLESHOOTING.md # Common issues & solutions
-│   ├── examples/       # Real-world .tasks templates
-│   │   ├── README.md
-│   │   ├── node-project.tasks
-│   │   ├── python-project.tasks
-│   │   ├── devops-k8s.tasks
-│   │   ├── microservices-root.tasks
-│   │   ├── microservice-service.tasks
-│   │   └── web-project.tasks
-│   └── screenshot.svg  # UI mockup
-├── integrations/       # Third-party integrations
-│   ├── alfred/
-│   ├── raycast/
-│   └── zsh/
+├── src/                # Modular source files (edited here, never run.sh directly)
+│   ├── 00-header.sh    # Shebang, strict mode, VERSION
+│   ├── 01-config.sh    # Config & settings
+│   ├── 02-utils.sh     # Shared helpers (trim_file_to_lines, get_realpath, …)
+│   ├── 03-terminal.sh  # Terminal capability init (TPUT_* vars, init_context)
+│   ├── 04-themes.sh    # Color themes
+│   ├── 05-cache.sh     # State persistence & memoization
+│   ├── 06-profiles.sh  # Profile system
+│   ├── 07-search.sh    # Search/filter logic
+│   ├── 08-tags.sh      # Tag system
+│   ├── 09-favorites.sh # Favorites management
+│   ├── 10-logs.sh      # Logging
+│   ├── 11-dependencies.sh # Dependency checks
+│   ├── 12-execution.sh # Task execution & CLI mode (--list / --run)
+│   ├── 13-ui.sh        # Main interactive loop & key handling
+│   ├── 14-browser.sh   # File browser
+│   ├── 15-editor.sh    # Config editor
+│   └── 16-main.sh      # Entry point & CLI arg parser
+├── run.sh              # Generated: concat of src/ (3900+ lines) — do not edit
+├── build.sh            # Build script: src/ → run.sh
+├── Makefile            # make dev | prod | all | test | lint | check | watch
+├── dist/               # Build artefacts (run-dev.sh, run-prod.sh, …)
+├── install.sh          # Installation script
+├── docs/               # Documentation
+│   ├── QUICK_START.md
+│   ├── ADVANCED_USAGE.md
+│   ├── TROUBLESHOOTING.md
+│   └── examples/       # Real-world .tasks templates
+├── integrations/       # Third-party integrations (Alfred, Raycast, Zsh)
 ├── scripts/
-│   └── release.sh      # Release automation
-├── completions/
-│   └── _run            # Zsh completions
-└── README.md           # Feature reference
+│   └── release.sh      # Release automation (--bump patch|minor|major)
+└── completions/
+    └── _run            # Zsh completions
 ```
 
 ---
@@ -447,14 +456,18 @@ execute_multi_profile_task() {
 git clone https://github.com/yourusername/shell-menu-runner
 cd shell-menu-runner
 
+# Build from source
+./build.sh --all       # Concatenates src/ → run.sh
+make dev               # Build dev version (dist/run-dev.sh)
+
 # Verify setup
 bash run.sh --help
-shellcheck -x run.sh   # Should be 0 errors, 0 warnings
+shellcheck run.sh      # Should be 0 errors, 0 warnings
 bash -n run.sh         # Syntax check
 
 # Create test profile
 echo "0|Test|echo hello|Test task" > .tasks
-run                    # Should load menu
+./run.sh               # Should load menu
 ```
 
 ### Code Style
@@ -501,23 +514,25 @@ my_function() {
 git checkout -b feature/my-feature
 ```
 
-**Step 2: Implement in run.sh**
+**Step 2: Implement in the appropriate `src/` module**
+
+See the [File Structure](#file-structure) above for which module owns which responsibility. Never edit `run.sh` directly — it is generated.
 
 ```bash
-# Add helper function
+# Add helper function in e.g. src/02-utils.sh
 my_feature_helper() {
     local arg=$1
     # Implementation
 }
 
-# Integrate with main flow
-# (Add calls in appropriate existing functions)
+# Rebuild to propagate the change
+./build.sh --all
 ```
 
 **Step 3: Add CLI flag if needed**
 
 ```bash
-# In CLI parser section (around line 2500)
+# In src/16-main.sh — argument parser section
 --my-flag)
     my_feature_helper "$1"
     shift
@@ -527,10 +542,10 @@ my_feature_helper() {
 **Step 4: Testing**
 
 ```bash
+./build.sh --all         # Rebuild after every edit
 bash -n run.sh           # Syntax check
-shellcheck -x run.sh     # Linting
-run --help               # Verify help text
-run --validate           # Validate tasks
+shellcheck run.sh        # Linting (0 errors expected)
+make check               # Full test + lint
 ```
 
 **Step 5: Documentation**
@@ -544,7 +559,7 @@ run --validate           # Validate tasks
 **Step 6: Submit PR**
 
 ```bash
-git add run.sh README.md docs/
+git add src/ run.sh README.md docs/
 git commit -m "feat: add my feature"
 git push origin feature/my-feature
 # Submit PR on GitHub
@@ -554,45 +569,15 @@ git push origin feature/my-feature
 
 ### Function Organization
 
-**Categories in run.sh:**
+**Modules in `src/`** (see [File Structure](#file-structure) for the full table):
 
-```bash
-# 1. Initialization (100-150 lines)
-main()
-setup_signal_handlers()
-initialize_environment()
-
-# 2. Display/Colors (100-200 lines)
-color_setup()
-render_menu()
-format_output()
-render_progress_bar()
-
-# 3. Profile Management (200-300 lines)
-load_profiles()
-load_profile_config()
-resolve_profile_location()
-
-# 4. Task Parsing (200-250 lines)
-parse_task_line()
-validate_task_syntax()
-extract_dependencies()
-
-# 5. Execution (300-400 lines)
-execute_task()
-execute_with_deps()
-execute_parallel()
-
-# 6. Utilities (100-150 lines)
-find_project_root()
-cache_profile()
-check_command_exists()
-
-# 7. CLI Handling (100-150 lines)
-parse_cli_args()
-show_help()
-show_version()
-```
+| Module | Responsibility |
+|--------|----------------|
+| `02-utils.sh` | Shared helpers (`trim_file_to_lines`, `get_realpath`, …) |
+| `03-terminal.sh` | Terminal caps, `init_context`, `build_border_strings` |
+| `12-execution.sh` | `execute_task`, `cli_list_tasks`, `cli_run_task` |
+| `13-ui.sh` | `main_interactive_loop`, `draw_menu`, `_reload_menu` |
+| `16-main.sh` | `main()`, CLI arg parser |
 
 ---
 
@@ -602,9 +587,10 @@ show_version()
 
 1. **Identify the problem** (use `run --debug` for help)
 2. **Create test case** (in .tasks file)
-3. **Fix in run.sh** (smallest change possible)
-4. **Verify fix** (bash -n, shellcheck, manual test)
-5. **Commit** with clear message
+3. **Fix in the appropriate `src/` module** (smallest change possible)
+4. **Rebuild:** `./build.sh --all`
+5. **Verify fix** (`bash -n run.sh`, `shellcheck run.sh`, manual test)
+6. **Commit** with clear message
 
 ### Adding a Feature
 
@@ -679,8 +665,9 @@ Parallel:   5s → 3x faster
 Before submitting PR:
 
 ```bash
+✅ Build clean:         ./build.sh --all
 ✅ Syntax valid:        bash -n run.sh
-✅ No lint warnings:    shellcheck -x run.sh
+✅ No lint warnings:    shellcheck run.sh
 ✅ Help works:          run --help
 ✅ Validation works:    run --validate .tasks
 ✅ Menu renders:        run (manual test)
@@ -699,11 +686,11 @@ Before submitting PR:
 See [scripts/release.sh](../../scripts/release.sh)
 
 ```bash
-./scripts/release.sh v1.x.0
-# - Bumps version
-# - Updates CHANGELOG.md
-# - Creates git tag
-# - Publishes GitHub release
+./scripts/release.sh --bump major   # 1.x.y → 2.0.0
+./scripts/release.sh --bump minor   # 1.x.y → 1.(x+1).0
+./scripts/release.sh --bump patch   # 1.x.y → 1.x.(y+1)
+./scripts/release.sh --dry-run --bump major  # Preview without changes
+# Steps: version bump in src/00-header.sh → build → SHA256 → CHANGELOG → git tag → push
 ```
 
 ---
@@ -712,7 +699,8 @@ See [scripts/release.sh](../../scripts/release.sh)
 
 | Metric                | Value                |
 | --------------------- | -------------------- |
-| Lines of code         | 2850+                |
+| Source modules        | 17 (`src/*.sh`)      |
+| Lines of code         | 3900+ (built)        |
 | Functions             | 95+                  |
 | Features              | 30+                  |
 | Profiles              | 18 templates         |

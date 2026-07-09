@@ -22,7 +22,8 @@ ${C_HEAD}Shell Menu Runner - Release Script${C_RST}
 
 ${C_DIM}Automates the release process:${C_RST}
   - Runs shellcheck (if available)
-  - Updates version in run.sh, README.md badges
+  - Updates version in src/00-header.sh, README.md badges
+  - Rebuilds run.sh via build.sh --all
   - Computes SHA256 hash and updates README
   - Collects git commits since last tag
   - Adds CHANGELOG entry with auto-generated commit list
@@ -30,10 +31,11 @@ ${C_DIM}Automates the release process:${C_RST}
   - Creates git commit, tag, and pushes to remote
 
 ${C_DIM}Usage:${C_RST}
-  $0              # Interactive menu
-  $0 --dry-run    # Direct dry-run mode
-  $0 --release    # Direct release mode
-  $0 --help       # Show this help
+  $0                       # Interactive menu
+  $0 --dry-run             # Direct dry-run mode
+  $0 --release             # Direct release mode
+  $0 --bump patch|minor|major  # Auto-compute next version and release
+  $0 --help                # Show this help
 EOF
   exit 0
 }
@@ -60,14 +62,45 @@ show_menu() {
 
 DRY_RUN=0
 INTERACTIVE=1
+BUMP=""
 
-for arg in "$@"; do
+# Compute the next semver given a current version and a bump type (patch/minor/major)
+bump_version() {
+  local current="$1" bump="$2"
+  python3 - <<PY
+parts = "$current".split(".")
+major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+if "$bump" == "major": print(f"{major+1}.0.0")
+elif "$bump" == "minor": print(f"{major}.{minor+1}.0")
+else: print(f"{major}.{minor}.{patch+1}")
+PY
+}
+
+i=1
+while [ "$i" -le "$#" ]; do
+  arg="${!i}"
   case "$arg" in
     --dry-run|-n) DRY_RUN=1; INTERACTIVE=0 ;;
     --release|-r) DRY_RUN=0; INTERACTIVE=0 ;;
+    --bump)
+      i=$(( i + 1 ))
+      BUMP="${!i:-}"
+      INTERACTIVE=0
+      ;;
+    --bump=*) BUMP="${arg#--bump=}"; INTERACTIVE=0 ;;
     --help|-h) show_help ;;
   esac
+  i=$(( i + 1 ))
 done
+
+case "${BUMP:-}" in
+  patch|minor|major|"")
+    ;;
+  *)
+    cecho "${C_ERR}✗ Invalid --bump value: $BUMP (must be patch, minor, or major)${C_RST}" >&2
+    exit 1
+    ;;
+esac
 
 if [ "$INTERACTIVE" -eq 1 ]; then
   if show_menu; then
@@ -117,17 +150,23 @@ else
 fi
 
 cecho "\n${C_DIM}→ Checking working tree...${C_RST}"
-if ! git diff --quiet; then
+if [ "$DRY_RUN" -eq 0 ] && ! git diff --quiet; then
   cecho "${C_ERR}✗ Working tree is not clean. Commit or stash changes first.${C_RST}" >&2
   exit 1
 fi
 cecho "${C_OK}✓ Working tree clean${C_RST}"
 
-cecho_n "\n${C_HEAD}Release version (e.g. 1.3.1):${C_RST} "
-read -r version
-if [ -z "$version" ]; then
-  cecho "${C_ERR}✗ Version is required.${C_RST}" >&2
-  exit 1
+if [ -n "${BUMP:-}" ]; then
+  current_version=$(grep -m1 'readonly VERSION=' src/00-header.sh | cut -d'"' -f2)
+  version=$(bump_version "$current_version" "$BUMP")
+  cecho "${C_DIM}→ Auto-bump ($BUMP): $current_version → $version${C_RST}"
+else
+  cecho_n "\n${C_HEAD}Release version (e.g. 2.0.0):${C_RST} "
+  read -r version
+  if [ -z "$version" ]; then
+    cecho "${C_ERR}✗ Version is required.${C_RST}" >&2
+    exit 1
+  fi
 fi
 
 if grep -q "^## \[$version\]" CHANGELOG.md; then
@@ -159,18 +198,26 @@ if [ "$DRY_RUN" -eq 1 ]; then
   cecho "\n${C_WARN}⚠ DRY-RUN MODE: No files will be modified${C_RST}\n"
 fi
 
-cecho "\n${C_DIM}[1/4] Updating version references...${C_RST}"
+cecho "\n${C_DIM}[1/5] Updating version references...${C_RST}"
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i '' -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" run.sh
+  sed -i '' -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh
   sed -i '' -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md
   sed -i '' -E "s/Version [0-9.]+ \(/Version $version (/g" README.md
-  cecho "${C_OK}✓ Version updated to $version${C_RST}"
+  cecho "${C_OK}✓ Version updated to $version in src/00-header.sh${C_RST}"
 else
-  cecho "${C_DIM}  - run.sh: readonly VERSION=\"$version\"${C_RST}"
+  cecho "${C_DIM}  - src/00-header.sh: readonly VERSION=\"$version\"${C_RST}"
   cecho "${C_DIM}  - README.md: version badge + Version lines${C_RST}"
 fi
 
-cecho "\n${C_DIM}[2/4] Computing SHA256 hash...${C_RST}"
+cecho "\n${C_DIM}[2/5] Rebuilding run.sh from src/...${C_RST}"
+if [ "$DRY_RUN" -eq 0 ]; then
+  ./build.sh --all
+  cecho "${C_OK}✓ Build complete${C_RST}"
+else
+  cecho "${C_DIM}  - ./build.sh --all would run here${C_RST}"
+fi
+
+cecho "\n${C_DIM}[3/5] Computing SHA256 hash...${C_RST}"
 sha=""
 if command -v sha256sum >/dev/null 2>&1; then
   sha=$(sha256sum run.sh | awk '{print $1}')
@@ -197,7 +244,7 @@ else
   cecho "${C_DIM}  - README.md: would update hash${C_RST}"
 fi
 
-cecho "\n${C_DIM}[3/4] Updating changelog...${C_RST}"
+cecho "\n${C_DIM}[4/5] Updating changelog...${C_RST}"
 if [ "$DRY_RUN" -eq 0 ]; then
   python3 - <<PY
 from pathlib import Path
@@ -217,7 +264,7 @@ new_lines.extend(["", ""] + lines[1:])
 
 path.write_text('\n'.join(new_lines), encoding="utf-8")
 PY
-  
+
   # Open editor for review
   if [ -n "${EDITOR:-}" ]; then
     cecho "${C_DIM}→ Opening editor for changelog review...${C_RST}"
@@ -227,7 +274,7 @@ PY
     cecho "${C_DIM}  Press Enter to continue or Ctrl+C to abort...${C_RST}"
     read -r
   fi
-  
+
   cecho "${C_OK}✓ CHANGELOG.md updated${C_RST}"
 else
   cecho "${C_DIM}  - CHANGELOG.md: would prepend ## [$version] - $date_str${C_RST}"
@@ -242,16 +289,16 @@ if [ "$DRY_RUN" -eq 0 ] && ! git diff --quiet; then
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  cecho "\n${C_DIM}[4/4] Git operations (dry-run):${C_RST}"
-  cecho "${C_DIM}  git add run.sh README.md CHANGELOG.md install.sh .github/workflows/release.yml${C_RST}"
-  cecho "${C_DIM}  git commit -m \"Release $version\"${C_RST}"
+  cecho "\n${C_DIM}[5/5] Git operations (dry-run):${C_RST}"
+  cecho "${C_DIM}  git add src/00-header.sh run.sh dist/ README.md CHANGELOG.md install.sh${C_RST}"
+  cecho "${C_DIM}  git commit -m \"chore(release): v$version\"${C_RST}"
   cecho "${C_DIM}  git tag v$version${C_RST}"
   cecho "${C_DIM}  git push && git push --tags${C_RST}"
   cecho "\n${C_WARN}✓ Dry-run complete. No changes made.${C_RST}"
   exit 0
 fi
 
-cecho "\n${C_DIM}[4/4] Git operations...${C_RST}"
+cecho "\n${C_DIM}[5/5] Git operations...${C_RST}"
 cecho_n "${C_HEAD}Commit, tag, and push v$version? [y/N]${C_RST} "
 read -r confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -260,9 +307,9 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
 fi
 
 cecho "${C_DIM}→ Adding files...${C_RST}"
-git add run.sh README.md CHANGELOG.md install.sh .github/workflows/release.yml
+git add src/00-header.sh run.sh dist/ README.md CHANGELOG.md install.sh
 cecho "${C_DIM}→ Creating commit...${C_RST}"
-git commit -m "Release $version"
+git commit -m "chore(release): v$version"
 cecho "${C_DIM}→ Creating tag...${C_RST}"
 git tag "v$version"
 cecho "${C_DIM}→ Pushing to remote...${C_RST}"

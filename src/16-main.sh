@@ -243,6 +243,7 @@ while [[ $# -gt 0 ]]; do
             echo "CLI Mode (no menu):"
             echo "  run --list              List all tasks for current profile"
             echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run --dry-run --run <n> Preview command without executing"
             echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
@@ -342,6 +343,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             cli_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run_mode=1
             shift
             ;;
         --list)

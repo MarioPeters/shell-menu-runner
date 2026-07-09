@@ -2232,7 +2232,8 @@ execute_tasks_parallel() {
 
 execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
-    dry_run_mode=0  # Reset dry-run flag
+    # dry_run_mode is set externally (--dry-run flag or future interactive 'd' key).
+    # Do NOT reset here — it is consumed and cleared inside the dry-run block below.
     
     # Show preview if interactive and not in CLI mode
     if [ "$is_interactive" -eq 1 ] && [ "${cli_mode:-0}" -eq 0 ]; then
@@ -2286,9 +2287,12 @@ execute_task() {
     save_state
     
     if [ "$dry_run_mode" -eq 1 ]; then
+        dry_run_mode=0  # Consume the flag — one-shot per execution
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
         echo -e "${COLOR_DIM}(No actual execution)${COLOR_RESET}\n"
-        echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        if [ "${cli_mode:-0}" -eq 0 ]; then
+            echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"; consume_keypress
+        fi
         return 0
     fi
     
@@ -3723,6 +3727,7 @@ while [[ $# -gt 0 ]]; do
             echo "CLI Mode (no menu):"
             echo "  run --list              List all tasks for current profile"
             echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
+            echo "  run --dry-run --run <n> Preview command without executing"
             echo "  run git --run build     Profile + task combined"
             echo ""
             echo "Profiles:"
@@ -3822,6 +3827,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             cli_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run_mode=1
             shift
             ;;
         --list)

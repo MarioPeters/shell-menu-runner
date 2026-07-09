@@ -37,18 +37,18 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ```bash
 # Syntax validation (MUST PASS)
-bash -n run.sh
+./build.sh --all     # Rebuild from src/ first
+bash -n run.sh       # Syntax check
 
 # Linting (MUST have 0 errors, 0 warnings)
-shellcheck -x run.sh
+shellcheck run.sh
 
 # Functionality test
 ./run.sh --help
 ./run.sh --validate demo
 
-# No breaking changes
-# Does your change affect existing .tasks files?
-# Can users upgrade without updating their profiles?
+# Full suite
+make check
 ```
 
 #### Coding Standards
@@ -104,8 +104,9 @@ Test your changes with:
    ```
 
 2. **Pass all checks**
+   - Build: `./build.sh --all` ✅
    - Syntax: `bash -n run.sh` ✅
-   - Linting: `shellcheck -x run.sh` (0 errors) ✅
+   - Linting: `shellcheck run.sh` (0 errors) ✅
    - Functionality: `./run.sh --help` ✅
    - Tests: Manual verification ✅
 
@@ -139,12 +140,12 @@ cd your-project
 ```bash
 # Enable debug mode
 RUN_DEBUG=1 ./run.sh
-set -x  # For bash tracing
 
 # Check cache
 ls -la /tmp/run_cache_$$
 
 # Validate syntax before running
+./build.sh --all
 bash -n run.sh
 ```
 
@@ -171,7 +172,8 @@ time ./run.sh --validate large
 
 The script handles:
 
-- Version bumping (patch, minor, major)
+- Version bumping via `--bump patch|minor|major`
+- Rebuilding `run.sh` from `src/` via `build.sh`
 - SHA256 checksum calculation
 - Git tagging
 - CHANGELOG generation from commits
