@@ -23,3 +23,18 @@ Thumbs.db
 # Temporary
 *.tmp
 *.bak
+
+# Secrets & credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.sh
+credentials.sh
+
+# Claude Code
+.build-cache/
+.build-logs/
+.superpowers/
