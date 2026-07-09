@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.0] - 2026-07-09
+
+- chore: remove outdated docs, gitignore private files, add _grep rg/grep fallback
+- feat(cli): --list, --run, --dry-run CLI mode with full test coverage
+- feat(ui): adaptive layout algorithm, button-style boxes, context indicator
+- refactor: modularize code structure, add browser/editor/test coverage
+- Add SHA256 hash for v1.7.0
+
+
+
 ## [Unreleased]
 
 ### Fixes
