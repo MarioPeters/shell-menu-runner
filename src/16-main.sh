@@ -29,7 +29,7 @@ self_update() {
             fi
         fi
         local new_ver=""
-        new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" 2>/dev/null | cut -d'"' -f2 2>/dev/null || true)
+        new_ver=$(_grep -m1 "readonly VERSION=" "$tmp_file" 2>/dev/null | cut -d'"' -f2 2>/dev/null || true)
         if [ -z "$new_ver" ]; then
             echo -e "${COLOR_ERR}$(msg download_error)${COLOR_RESET}"
             rm -f "$tmp_file"
@@ -68,7 +68,7 @@ self_update() {
 smart_init() {
     local mode="$1"
     local target="$LOCAL_CONFIG"; [ "$mode" == "global" ] && target="$GLOBAL_CONFIG"
-    
+
     if [ -f "$target" ]; then
         echo -e "${COLOR_WARN}$(msg config_exists) '$target'.${COLOR_RESET}"
         return 1
@@ -131,7 +131,7 @@ EOF
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ $(msg node_detected)${COLOR_RESET}"
             local scripts
-            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
+            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | _grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done
@@ -420,9 +420,9 @@ else
 fi
 
 if [ -z "$config_path" ]; then
-    if found=$(find_local_config); then 
+    if found=$(find_local_config); then
         config_path="$found"
-    elif [ -f "$GLOBAL_CONFIG" ]; then 
+    elif [ -f "$GLOBAL_CONFIG" ]; then
         active_mode="global"
         config_path="$GLOBAL_CONFIG"
     else

@@ -4,7 +4,7 @@
 
 edit_config_menu() {
     local file="${1:-$config_path}"
-    
+
     while true; do
         clear
         echo -e "${COLOR_HEAD}Config Editor${COLOR_RESET}"
@@ -16,7 +16,7 @@ edit_config_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
+
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$file"
@@ -28,12 +28,12 @@ edit_config_menu() {
                 echo -e "${COLOR_HEAD}Replace File Content${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Paste your content below, then press Ctrl+D (or Ctrl+Z on Windows)${COLOR_RESET}"
                 echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-                
+
                 # Create temp file
                 local tmp_file
                 tmp_file=$(mktemp)
                 cat > "$tmp_file"
-                
+
                 # Show preview
                 echo ""
                 echo -e "${COLOR_WARN}Preview (first 10 lines):${COLOR_RESET}"
@@ -70,7 +70,7 @@ edit_config_menu() {
 show_alias_editor() {
     clear
     echo -e "${COLOR_HEAD}Alias Manager${COLOR_RESET}"
-    
+
     if [ ! -f "$ALIAS_FILE" ] || [ ! -s "$ALIAS_FILE" ]; then
         echo -e "${COLOR_DIM}No aliases defined yet.${COLOR_RESET}"
         echo -e "${COLOR_INFO}Create alias file? [y/N]${COLOR_RESET}"
@@ -89,14 +89,14 @@ EOF
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
-        # Einzelner grep statt zwei Pipes — spart einen Fork
-        grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
+        # Einzelner _grep statt zwei Pipes — spart einen Fork
+        _grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
         echo ""
         echo "1) Edit aliases"
         echo "2) Add new alias"
         echo "0) Back"
         choice=$(read_key) || return
-        
+
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$ALIAS_FILE"
@@ -114,7 +114,7 @@ EOF
                 ;;
         esac
     fi
-    
+
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
@@ -158,7 +158,7 @@ settings_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
+
         case "$choice" in
             "1")
                 echo -e "\n${COLOR_INFO}Select Theme:${COLOR_RESET}"
