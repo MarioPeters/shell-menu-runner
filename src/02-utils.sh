@@ -2,6 +2,14 @@
 #  POLYFILLS & UTILS
 # ==============================================================================
 
+# Use ripgrep (rg) when available — same flags, faster on large inputs.
+# Falls back to system grep transparently.
+if command -v rg >/dev/null 2>&1; then
+    _grep() { rg "$@"; }
+else
+    _grep() { grep "$@"; }
+fi
+
 get_realpath() {
     if command -v realpath &>/dev/null; then
         realpath "$1"
@@ -12,18 +20,18 @@ get_realpath() {
         echo "$PWD/${1#./}"
     fi
 }
-cleanup_terminal() { 
+cleanup_terminal() {
     if [ -n "${TPUT_CNORM:-}" ]; then
         echo -ne "$TPUT_CNORM"
     else
         tput cnorm 2>/dev/null || true
     fi
-    echo -e "${COLOR_RESET}"; 
+    echo -e "${COLOR_RESET}";
 }
 handle_interrupt() { cleanup_terminal; clear; exit 130; }
 trap cleanup_terminal EXIT
 trap handle_interrupt INT TERM
-hide_cursor() { 
+hide_cursor() {
     if [ -n "${TPUT_CIVIS:-}" ]; then
         echo -ne "$TPUT_CIVIS"
     else
@@ -89,10 +97,10 @@ copy_to_clipboard() {
 
 validate_filename() {
     local fn="$1"
-    
+
     # Reject empty names
     [ -z "$fn" ] && return 1
-    
+
     # Reject dangerous paths
     [[ "$fn" =~ \.\. ]] && return 1      # Parent directory
     [[ "$fn" = *'/'* ]] && return 1      # Absolute/relative paths
@@ -103,9 +111,9 @@ validate_filename() {
     [[ "$fn" = *'&'* ]] && return 1      # Background operators
     [[ "$fn" = *'>'* ]] && return 1      # Redirection
     [[ "$fn" = *'<'* ]] && return 1      # Redirection
-    
+
     # Allow: alphanumeric, dots, dashes, underscores, plus common extensions
     [[ "$fn" =~ ^[a-zA-Z0-9._-]+$ ]] && return 0
-    
+
     return 1
 }

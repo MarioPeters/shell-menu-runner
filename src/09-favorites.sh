@@ -7,7 +7,7 @@ readonly RUN_FAVORITES_FILE="$HOME/.run_favorites"
 is_favorite() {
     local task_name="$1"
     if [ -f "$RUN_FAVORITES_FILE" ]; then
-        grep -qxF "$task_name" "$RUN_FAVORITES_FILE" || return 1
+        _grep -qxF "$task_name" "$RUN_FAVORITES_FILE" || return 1
     else
         return 1
     fi
@@ -16,7 +16,7 @@ is_favorite() {
 toggle_favorite() {
     local task_name="$1"
     if is_favorite "$task_name"; then
-        if grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
+        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
             mv "${RUN_FAVORITES_FILE}.tmp" "$RUN_FAVORITES_FILE"
         fi
         echo -e "${COLOR_INFO}⭐ Removed from favorites${COLOR_RESET}"

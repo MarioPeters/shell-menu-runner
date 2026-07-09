@@ -8,15 +8,15 @@ SEARCH_HISTORY_MAX=20
 save_search_term() {
     local term="$1"
     [ -z "$term" ] && return
-    
+
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
+        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
         mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
     fi
-    
+
     echo "$term" >> "$SEARCH_HISTORY_FILE"
-    
+
     # Keep only last N entries
     trim_file_to_lines "$SEARCH_HISTORY_FILE" "$SEARCH_HISTORY_MAX"
 }
@@ -34,7 +34,7 @@ interactive_search() {
     local -a history_items=()
     IFS=$'\n' read -r -d '' -a history_items < <(get_search_history && printf '\0') || true
     local history_pos=-1
-    
+
     clear
     echo -e "${COLOR_HEAD}Search Tasks${COLOR_RESET}"
     echo -e "${COLOR_INFO}Type to search (ESC to cancel, Enter to apply):${COLOR_RESET}"
@@ -43,7 +43,7 @@ interactive_search() {
     fi
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -n "Search: "
-    
+
     while true; do
         char=$(read_key) || return 1
         case "$char" in

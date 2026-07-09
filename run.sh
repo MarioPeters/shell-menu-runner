@@ -253,6 +253,14 @@ file_sha256() {
 #  POLYFILLS & UTILS
 # ==============================================================================
 
+# Use ripgrep (rg) when available — same flags, faster on large inputs.
+# Falls back to system grep transparently.
+if command -v rg >/dev/null 2>&1; then
+    _grep() { rg "$@"; }
+else
+    _grep() { grep "$@"; }
+fi
+
 get_realpath() {
     if command -v realpath &>/dev/null; then
         realpath "$1"
@@ -1215,7 +1223,7 @@ save_search_term() {
     
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
+        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
         mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
     fi
     
@@ -1408,7 +1416,7 @@ readonly RUN_FAVORITES_FILE="$HOME/.run_favorites"
 is_favorite() {
     local task_name="$1"
     if [ -f "$RUN_FAVORITES_FILE" ]; then
-        grep -qxF "$task_name" "$RUN_FAVORITES_FILE" || return 1
+        _grep -qxF "$task_name" "$RUN_FAVORITES_FILE" || return 1
     else
         return 1
     fi
@@ -1417,7 +1425,7 @@ is_favorite() {
 toggle_favorite() {
     local task_name="$1"
     if is_favorite "$task_name"; then
-        if grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
+        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
             mv "${RUN_FAVORITES_FILE}.tmp" "$RUN_FAVORITES_FILE"
         fi
         echo -e "${COLOR_INFO}⭐ Removed from favorites${COLOR_RESET}"
@@ -3361,8 +3369,8 @@ EOF
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
-        # Einzelner grep statt zwei Pipes — spart einen Fork
-        grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
+        # Einzelner _grep statt zwei Pipes — spart einen Fork
+        _grep -Ev '^#|^[[:space:]]*$' "$ALIAS_FILE" || true
         echo ""
         echo "1) Edit aliases"
         echo "2) Add new alias"
@@ -3513,7 +3521,7 @@ self_update() {
             fi
         fi
         local new_ver=""
-        new_ver=$(grep -m1 "readonly VERSION=" "$tmp_file" 2>/dev/null | cut -d'"' -f2 2>/dev/null || true)
+        new_ver=$(_grep -m1 "readonly VERSION=" "$tmp_file" 2>/dev/null | cut -d'"' -f2 2>/dev/null || true)
         if [ -z "$new_ver" ]; then
             echo -e "${COLOR_ERR}$(msg download_error)${COLOR_RESET}"
             rm -f "$tmp_file"
@@ -3615,7 +3623,7 @@ EOF
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ $(msg node_detected)${COLOR_RESET}"
             local scripts
-            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
+            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | _grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done

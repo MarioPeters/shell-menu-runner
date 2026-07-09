@@ -4,6 +4,11 @@
 # Internal AI planning docs — kept local only
 docs/superpowers/
 
+# Private development notes (local only, never push)
+notes/
+CLAUDE.md
+OPTIMIZATION_RECOMMENDATIONS.md
+
 # Development files
 README.dev.md
 ai-promt.txt

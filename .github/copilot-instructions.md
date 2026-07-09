@@ -22,8 +22,8 @@ This project is a modular Bash-based task runner and menu system.
 ## Development Workflow
 
 1.  **Edit**: proper files in `src/`.
-2.  **Build**: Run `./build.sh --all` to regenerate `run.sh`.
-3.  **Test**: Run `./run.sh` (or `bash -x ./run.sh` for debugging).
+2.  **Build**: Run `./build.sh` to regenerate `run.sh`, then `make dev` for the dev distribution.
+3.  **Test**: Run `make test` (full test suite) or `bash -x ./run.sh` for interactive debugging.
 
 ## Coding Guidelines (Bash)
 
@@ -49,6 +49,7 @@ These patterns MUST always be applied when writing or modifying code in this pro
 - **NEVER** use `var=$(cat single_line_file)` — use `read -r var < file` (no fork).
 - **NEVER** chain `grep -v 'a' | grep -v 'b'` — use a single `grep -Ev 'a|b'` call.
 - **NEVER** use `echo "$path" | sed ...` or `echo "$path" | grep ...` — use `sed ... <<< "$path"` with here-strings.
+- When an external `grep` call on a **file** is unavoidable, use `_grep()` from `02-utils.sh` — it prefers `rg` (ripgrep) when available and falls back to `grep` transparently.
 
 ### macOS / BSD compatibility
 
@@ -75,6 +76,7 @@ These patterns MUST always be applied when writing or modifying code in this pro
 ### DRY – eliminate duplicate code patterns
 
 - **`trim_file_to_lines <file> <max>`** (`02-utils.sh`): use it everywhere a file is capped to N lines. Do NOT re-implement `wc -l / tail / mv` inline.
+- **`_grep [flags] pattern file`** (`02-utils.sh`): use it for all external grep-on-file calls — uses `rg` if installed, falls back to `grep`.
 - **`_reload_menu`** (`13-ui.sh`): call it instead of the 3-line `IFS read < <(get_menu_options) + calculate_layout` pattern.
 - **`_reinit_menu`** (`13-ui.sh`): call it instead of the 5-function sequence `parse_config_vars + load_settings + load_state + detect_config_files + load_aliases + _reload_menu`.
 - **`run_with_term_paused <fn> [args]`** (`13-ui.sh`): wrap every `restore_term; <function>; [ is_interactive ] && stty raw` triplet with this helper.
@@ -91,8 +93,8 @@ These patterns MUST always be applied when writing or modifying code in this pro
 
 - **Config**: `src/01-config.sh` handles loading `.tasks` files.
 - **UI**: `src/13-ui.sh` contains the main interactive loop and key handling.
-- **Execution**: `src/12-execution.sh` handles running selected tasks.
-- **Utils**: `src/02-utils.sh` contains shared helpers incl. `trim_file_to_lines()`.
+- **Execution**: `src/12-execution.sh` handles running selected tasks. Supports `--dry-run` (shows command without executing) and `--run <name|number>` CLI mode.
+- **Utils**: `src/02-utils.sh` contains shared helpers incl. `trim_file_to_lines()`, `_grep()` (rg/grep fallback), `get_realpath()`, `get_file_mtime()`.
 - **Cache**: `src/05-cache.sh` handles state persistence and memoization.
 
 ## Troubleshooting
