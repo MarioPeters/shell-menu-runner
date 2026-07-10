@@ -610,7 +610,7 @@ test_init_context_no_crash() {
     output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --version 2>&1 || true)
     rm -rf "$tmp_dir"
 
-    if assert_contains "$output" "1."; then
+    if assert_contains "$output" "[0-9]\."; then
         test_pass
     else
         test_fail "Script crashed during init_context: $output"
