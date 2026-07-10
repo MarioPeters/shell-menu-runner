@@ -56,7 +56,9 @@ trim_file_to_lines() {
     local lines
     lines=$(wc -l < "$file" 2>/dev/null || echo 0)
     if [ "$lines" -gt "$max" ]; then
-        tail -n "$max" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" || true
+        if tail -n "$max" "$file" > "${file}.tmp"; then
+            mv "${file}.tmp" "$file" || rm -f "${file}.tmp"
+        fi
     fi
 }
 

@@ -170,13 +170,13 @@ detect_config_files() {
 
     task_config_files=()
     if [ "$base_name" = ".tasks" ]; then
-        [ -f "$config_dir/.tasks" ] && task_config_files+=("$config_dir/.tasks") || true
-        [ -f "$config_dir/.tasks.local" ] && task_config_files+=("$config_dir/.tasks.local") || true
-        [ -f "$config_dir/.tasks.dev" ] && task_config_files+=("$config_dir/.tasks.dev") || true
+        if [ -f "$config_dir/.tasks" ];              then task_config_files+=("$config_dir/.tasks");              fi
+        if [ -f "$config_dir/.tasks.local" ];         then task_config_files+=("$config_dir/.tasks.local");         fi
+        if [ -f "$config_dir/.tasks.dev" ];           then task_config_files+=("$config_dir/.tasks.dev");           fi
     else
-        [ -f "$config_dir/$base_name" ] && task_config_files+=("$config_dir/$base_name") || true
-        [ -f "$config_dir/${base_name}.local" ] && task_config_files+=("$config_dir/${base_name}.local") || true
-        [ -f "$config_dir/${base_name}.dev" ] && task_config_files+=("$config_dir/${base_name}.dev") || true
+        if [ -f "$config_dir/$base_name" ];           then task_config_files+=("$config_dir/$base_name");           fi
+        if [ -f "$config_dir/${base_name}.local" ];   then task_config_files+=("$config_dir/${base_name}.local");   fi
+        if [ -f "$config_dir/${base_name}.dev" ];     then task_config_files+=("$config_dir/${base_name}.dev");     fi
     fi
 
     return 0
