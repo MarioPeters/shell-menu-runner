@@ -11,7 +11,7 @@ COLOR_RESET=$'\e[0m';   COLOR_BOLD=$'\e[0;1m'
 current_level=0
 selected_index=0
 history_name_stack=("Main")
-config_path="" 
+config_path=""
 active_mode="local"
 filter_query=""
 tag_filter=""
@@ -38,8 +38,8 @@ cli_list_mode=0     # 1 when --list is active
 readonly DEFAULT_LANG="DE"
 readonly DEFAULT_THEME="CYBER"
 readonly DEFAULT_COLS_MIN=1
-readonly DEFAULT_COLS_MAX=4
-readonly DEFAULT_COLS_MIN_WIDTH=30
+readonly DEFAULT_COLS_MAX=6
+readonly DEFAULT_COLS_MIN_WIDTH=28
 readonly DEFAULT_CONTEXT_SHOW="git,hostname,env"
 UI_LANG="$DEFAULT_LANG"
 UI_THEME="$DEFAULT_THEME"
@@ -167,7 +167,7 @@ detect_config_files() {
         config_dir="$HOME"
     fi
     local base_name="${config_path##*/}"
-    
+
     task_config_files=()
     if [ "$base_name" = ".tasks" ]; then
         [ -f "$config_dir/.tasks" ] && task_config_files+=("$config_dir/.tasks") || true

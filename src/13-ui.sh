@@ -88,25 +88,25 @@ get_menu_options() {
             fi
         fi
     fi
-    
+
     # Build menu options
     local level_str=""
     local search_pattern=""
     local tag_pattern=""
-    
+
     if [ "$current_level" -gt 0 ]; then
         level_str="${history_name_stack[$current_level]}"
     fi
-    
+
     if [ -n "$filter_query" ]; then
         # tr mit here-string: kein echo-Subshell-Pipe
         search_pattern=$(tr '[:upper:]' '[:lower:]' <<< "$filter_query")
     fi
-    
+
     if [ -n "$tag_filter" ]; then
         tag_pattern="$tag_filter"
     fi
-    
+
     local result=""
     # Process substitution: Config-Inhalt direkt streamen — kein all_output-String-Kopie im Speicher
     while IFS= read -r line || [ -n "$line" ]; do
@@ -170,6 +170,7 @@ draw_menu() {
         clear
     fi
     hide_cursor
+    local _EL='\033[K'   # erase-to-EOL — prevents ghost text from shorter redraws
 
     # ── Header ───────────────────────────────────────────────────────
     local mode_indicator="[${active_mode}]"
@@ -178,24 +179,24 @@ draw_menu() {
         local _pname="${_bn##.tasks}"; _pname="${_pname#.}"
         [ -n "$_pname" ] && mode_indicator="[${_pname}]"
     fi
-    echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}"
+    echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}${_EL}"
 
     # Context line (git branch, hostname, env) — empty string = no line
-    [ -n "${_CTX_LINE:-}" ] && echo -e "${_CTX_LINE}"
+    [ -n "${_CTX_LINE:-}" ] && echo -e "${_CTX_LINE}${_EL}"
 
     if [ "$current_level" -gt 0 ]; then
         local _bc=""
         for _bname in "${history_name_stack[@]}"; do _bc="${_bc}${_bname} > "; done
-        echo -e "${COLOR_DIM}${_bc%> }${COLOR_RESET}"
+        echo -e "${COLOR_DIM}${_bc%> }${COLOR_RESET}${_EL}"
     fi
-    [ -n "$filter_query" ] && echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}"
-    [ -n "$tag_filter"   ] && echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}"
-    echo ""
+    [ -n "$filter_query" ] && echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}${_EL}"
+    [ -n "$tag_filter"   ] && echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}${_EL}"
+    echo -e "${_EL}"
 
     # ── Empty state ──────────────────────────────────────────────────
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
-        echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}"
+        echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}${_EL}"
         [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
         return
     fi
@@ -215,7 +216,7 @@ draw_menu() {
         build_border_strings "$col_width"
     fi
 
-    # ── Grid rendering (3 lines per row) ─────────────────────────────
+    # ── Grid rendering (3 lines per item, separate boxes) ───────────
     local r c idx
     local gap="  "   # 2-space gap between columns; added BEFORE column (not after)
 
@@ -230,7 +231,6 @@ draw_menu() {
             local border_color="$COLOR_DIM"
             [ "$idx" -eq "$selected_index" ] && border_color="$COLOR_SEL"
 
-            # Gap before all columns except the first in this row
             if [ "$first_in_row" -eq 0 ]; then
                 top_line+="$gap"
                 content_line+="$gap"
@@ -238,7 +238,6 @@ draw_menu() {
             fi
             first_in_row=0
 
-            # Top/bottom border
             top_line+="${border_color}${_BORDER_TOP}${COLOR_RESET}"
             bot_line+="${border_color}${_BORDER_BOT}${COLOR_RESET}"
 
@@ -255,30 +254,44 @@ draw_menu() {
                 marker="☑ "; text_color="$COLOR_INFO"
             fi
 
-            # Truncate name to fit
-            if [ "${#_name}" -gt "$name_max" ]; then
-                local _trunc=$(( name_max - 3 ))
+            # Wide-char visual-width correction:
+            # printf "%-*s" counts code-points, but emoji (4-byte UTF-8) occupy 2 terminal cols.
+            # Compare char count (${#} in UTF-8) vs byte count (${#} in C locale) to detect extras.
+            local _nc=${#_name} _nb _lc_was_set=0 _lc_saved=""
+            [ -n "${LC_ALL+x}" ] && _lc_was_set=1 && _lc_saved="$LC_ALL"
+            LC_ALL=C; _nb=${#_name}
+            if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+            local _wc_extra=$(( (_nb - _nc) / 3 ))   # extra terminal cols from wide chars
+
+            # Truncate to fit (check visual width)
+            if [ $(( _nc + _wc_extra )) -gt "$name_max" ]; then
+                local _trunc=$(( name_max - 3 - _wc_extra ))
                 [ "$_trunc" -lt 1 ] && _trunc=1
                 _name="${_name:0:$_trunc}..."
             fi
-            # Pad name to name_max chars — printf -v avoids subshell
+            # Pad: reduce target by extra cols so the box border stays aligned
+            local _pad_target=$(( name_max - _wc_extra ))
+            [ "$_pad_target" -lt 0 ] && _pad_target=0
             local _padded
-            printf -v _padded "%-*s" "$name_max" "$_name"
+            printf -v _padded "%-*s" "$_pad_target" "$_name"
 
             content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
         done
 
-        echo -e "$top_line"
-        echo -e "$content_line"
-        echo -e "$bot_line"
+        echo -e "${top_line}${_EL}"
+        echo -e "${content_line}${_EL}"
+        echo -e "${bot_line}${_EL}"
     done
 
-    # ── Footer hints ─────────────────────────────────────────────────
-    echo ""
-    if [ "$cols" -gt 1 ]; then
-        echo -e "${COLOR_DIM}[↑↓ ←→ h/l] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+    # ── Footer hints (width-adaptive to prevent wrapping) ───────────
+    echo -e "${_EL}"
+    if [ "$term_width" -ge 80 ]; then
+        local _nav_lr=""; [ "$cols" -gt 1 ] && _nav_lr=" ←→ h/l"
+        echo -e "${COLOR_DIM}[↑↓${_nav_lr}] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}${_EL}"
+    elif [ "$term_width" -ge 46 ]; then
+        echo -e "${COLOR_DIM}[↑↓←→] Nav | [Enter] Run | [/] Search | [?] Help${COLOR_RESET}${_EL}"
     else
-        echo -e "${COLOR_DIM}[↑↓] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}"
+        echo -e "${COLOR_DIM}[↑↓←→]  [Enter]  [/]  [?]${COLOR_RESET}${_EL}"
     fi
 
     [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
@@ -327,13 +340,13 @@ main_interactive_loop() {
     local num=${#menu_options[@]}
     local rows=$_layout_rows cols=$_layout_cols
     local redraw_needed=1
-    
+
     # OPTIMIZATION: Set raw mode once to avoid stty overhead
     local old_stty=""
     restore_term() {
         [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
     }
-    
+
     if [ "$is_interactive" -eq 1 ]; then
         old_stty=$(stty -g 2>/dev/null)
         set_raw_mode
@@ -346,7 +359,7 @@ main_interactive_loop() {
             draw_menu
             redraw_needed=0
         fi
-        
+
         # ══════════════════════════════════════════════════════════════
         #  KEYBOARD INPUT HANDLING
         # ══════════════════════════════════════════════════════════════
@@ -361,7 +374,7 @@ main_interactive_loop() {
             # Non-interactive: read line (for SSH without TTY)
             read -r key || break
         fi
-        
+
         # ══════════════════════════════════════════════════════════════
         #  KEY HANDLING
         # ══════════════════════════════════════════════════════════════
@@ -444,7 +457,7 @@ main_interactive_loop() {
             $'\r'|$'\n'|"") # ENTER: \r = raw CR, \n = LF, "" = \n stripped by $()
                 set +u
                 [ ${#menu_options[@]} -eq 0 ] && { set -u; continue; }
-                
+
                 # Multi-select execution
                 if [ ${#multi_select_map[@]} -gt 0 ]; then
                     set -u
@@ -465,7 +478,7 @@ main_interactive_loop() {
                     continue
                 fi
                 set -u
-                
+
                 # Single execution
                 IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
                 if [ "$cmd" == "EXIT" ]; then
@@ -505,7 +518,7 @@ main_interactive_loop() {
             "r"|"R") run_with_term_paused show_favorites; redraw_needed=1;;
             "q"|"Q") restore_term; clear; exit 0;;
         esac
-        
+
         # Wrap around selection index
         local cnt=${#menu_options[@]}
         [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1))
@@ -528,7 +541,7 @@ context_menu() {
         sleep 1
         return
     fi
-    
+
     # Show context menu with available actions
     clear
     echo -e "${COLOR_HEAD}Context Menu: ${name}${COLOR_RESET}"
@@ -540,7 +553,7 @@ context_menu() {
     echo "0) Cancel"
     echo ""
     read -rsn1 choice
-    
+
     case "$choice" in
         1) copy_to_clipboard "$name" ;;
         2) copy_to_clipboard "$cmd" ;;

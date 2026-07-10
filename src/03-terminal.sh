@@ -208,10 +208,10 @@ print_ssh_hint() {
   ⚠️  SSH Session Detected (No TTY)
 ════════════════════════════════════════════════════════════════
   For interactive mode, reconnect with: ssh -t user@host
-  
+
   Example:
     ssh -t user@server.com "cd myproject && run"
-    
+
   Or using an alias:
     alias ssh-run="ssh -t"
     ssh-run user@server "cd myproject && run"
