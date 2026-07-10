@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2] - 2026-07-10
+
+- refactor: clean up whitespace and improve output formatting in scripts
+- chore: update version to 2.0.1 in run-dev.sh
+
+
+
 ## [2.0.1] - 2026-07-10
 
 - chore: update GitHub Actions to use latest versions of checkout and release actions
