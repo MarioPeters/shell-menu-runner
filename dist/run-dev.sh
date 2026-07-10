@@ -17,7 +17,7 @@ fi
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="1.7.0"
+readonly VERSION="2.0.0"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly LOCAL_SETTINGS=".runrc"
@@ -271,18 +271,18 @@ get_realpath() {
         echo "$PWD/${1#./}"
     fi
 }
-cleanup_terminal() { 
+cleanup_terminal() {
     if [ -n "${TPUT_CNORM:-}" ]; then
         echo -ne "$TPUT_CNORM"
     else
         tput cnorm 2>/dev/null || true
     fi
-    echo -e "${COLOR_RESET}"; 
+    echo -e "${COLOR_RESET}";
 }
 handle_interrupt() { cleanup_terminal; clear; exit 130; }
 trap cleanup_terminal EXIT
 trap handle_interrupt INT TERM
-hide_cursor() { 
+hide_cursor() {
     if [ -n "${TPUT_CIVIS:-}" ]; then
         echo -ne "$TPUT_CIVIS"
     else
@@ -348,10 +348,10 @@ copy_to_clipboard() {
 
 validate_filename() {
     local fn="$1"
-    
+
     # Reject empty names
     [ -z "$fn" ] && return 1
-    
+
     # Reject dangerous paths
     [[ "$fn" =~ \.\. ]] && return 1      # Parent directory
     [[ "$fn" = *'/'* ]] && return 1      # Absolute/relative paths
@@ -362,10 +362,10 @@ validate_filename() {
     [[ "$fn" = *'&'* ]] && return 1      # Background operators
     [[ "$fn" = *'>'* ]] && return 1      # Redirection
     [[ "$fn" = *'<'* ]] && return 1      # Redirection
-    
+
     # Allow: alphanumeric, dots, dashes, underscores, plus common extensions
     [[ "$fn" =~ ^[a-zA-Z0-9._-]+$ ]] && return 0
-    
+
     return 1
 }
 
@@ -1220,15 +1220,15 @@ SEARCH_HISTORY_MAX=20
 save_search_term() {
     local term="$1"
     [ -z "$term" ] && return
-    
+
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
         _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
         mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
     fi
-    
+
     echo "$term" >> "$SEARCH_HISTORY_FILE"
-    
+
     # Keep only last N entries
     trim_file_to_lines "$SEARCH_HISTORY_FILE" "$SEARCH_HISTORY_MAX"
 }
@@ -1246,7 +1246,7 @@ interactive_search() {
     local -a history_items=()
     IFS=$'\n' read -r -d '' -a history_items < <(get_search_history && printf '\0') || true
     local history_pos=-1
-    
+
     clear
     echo -e "${COLOR_HEAD}Search Tasks${COLOR_RESET}"
     echo -e "${COLOR_INFO}Type to search (ESC to cancel, Enter to apply):${COLOR_RESET}"
@@ -1255,7 +1255,7 @@ interactive_search() {
     fi
     echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
     echo -n "Search: "
-    
+
     while true; do
         char=$(read_key) || return 1
         case "$char" in
@@ -3284,7 +3284,7 @@ file_browser() {
 
 edit_config_menu() {
     local file="${1:-$config_path}"
-    
+
     while true; do
         clear
         echo -e "${COLOR_HEAD}Config Editor${COLOR_RESET}"
@@ -3296,7 +3296,7 @@ edit_config_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
+
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$file"
@@ -3308,12 +3308,12 @@ edit_config_menu() {
                 echo -e "${COLOR_HEAD}Replace File Content${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Paste your content below, then press Ctrl+D (or Ctrl+Z on Windows)${COLOR_RESET}"
                 echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
-                
+
                 # Create temp file
                 local tmp_file
                 tmp_file=$(mktemp)
                 cat > "$tmp_file"
-                
+
                 # Show preview
                 echo ""
                 echo -e "${COLOR_WARN}Preview (first 10 lines):${COLOR_RESET}"
@@ -3350,7 +3350,7 @@ edit_config_menu() {
 show_alias_editor() {
     clear
     echo -e "${COLOR_HEAD}Alias Manager${COLOR_RESET}"
-    
+
     if [ ! -f "$ALIAS_FILE" ] || [ ! -s "$ALIAS_FILE" ]; then
         echo -e "${COLOR_DIM}No aliases defined yet.${COLOR_RESET}"
         echo -e "${COLOR_INFO}Create alias file? [y/N]${COLOR_RESET}"
@@ -3376,7 +3376,7 @@ EOF
         echo "2) Add new alias"
         echo "0) Back"
         choice=$(read_key) || return
-        
+
         case "$choice" in
             "1")
                 ${EDITOR:-nano} "$ALIAS_FILE"
@@ -3394,7 +3394,7 @@ EOF
                 ;;
         esac
     fi
-    
+
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
 }
@@ -3438,7 +3438,7 @@ settings_menu() {
         echo "0) Back"
         echo ""
         choice=$(read_key) || break
-        
+
         case "$choice" in
             "1")
                 echo -e "\n${COLOR_INFO}Select Theme:${COLOR_RESET}"
@@ -3560,7 +3560,7 @@ self_update() {
 smart_init() {
     local mode="$1"
     local target="$LOCAL_CONFIG"; [ "$mode" == "global" ] && target="$GLOBAL_CONFIG"
-    
+
     if [ -f "$target" ]; then
         echo -e "${COLOR_WARN}$(msg config_exists) '$target'.${COLOR_RESET}"
         return 1
@@ -3912,9 +3912,9 @@ else
 fi
 
 if [ -z "$config_path" ]; then
-    if found=$(find_local_config); then 
+    if found=$(find_local_config); then
         config_path="$found"
-    elif [ -f "$GLOBAL_CONFIG" ]; then 
+    elif [ -f "$GLOBAL_CONFIG" ]; then
         active_mode="global"
         config_path="$GLOBAL_CONFIG"
     else
