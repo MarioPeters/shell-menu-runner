@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.3] - 2026-07-10
+
+- refactor: improve conditional checks and error handling in config and utility scripts
+- ui: compact layout, ghost-text fix, adaptive footer
+
+
+
 ## [2.0.2] - 2026-07-10
 
 - refactor: clean up whitespace and improve output formatting in scripts
