@@ -1,6 +1,6 @@
 # 🚀 Shell Menu Runner
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.0.1-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
 
 [English](#english) | [Deutsch](#deutsch)
 
@@ -9,7 +9,7 @@
 ## 🇺🇸 English
 
 **The Ultimate Task Runner for the Terminal.**
-Version 2.0.0 (Task Tags & Shell Completion). Zero config, Zero dependencies. Runs on Linux and macOS.
+Version 2.0.1 (Task Tags & Shell Completion). Zero config, Zero dependencies. Runs on Linux and macOS.
 
 ### 📸 Screenshot
 
@@ -119,7 +119,7 @@ Version 2.0.0 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 - **Magic Installer:** One-liner installer via `install.sh`.
 - **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
 - Without `RUN_EXPECTED_SHA256`, `run --update` asks for confirmation before applying the download.
-- Recommended hash for v2.0.0: c9915f37170e32949d5b84712ac3fa36eccd9cdaa414476f9277ae02370a8435
+- Recommended hash for v2.0.1: 0ff7a7b6f620ffe3b19bd063396cb6a356fa7cb2c15872d4a47e3bbe1ee2ff96
 
 **14) 🔒 Security Notes**
 
@@ -391,7 +391,7 @@ Pull requests are welcome! Please run `shellcheck` before submitting.
 ## 🇩🇪 Deutsch
 
 **Die Kommandozentrale für dein Terminal.**
-Version 2.0.0 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. Läuft auf Linux und macOS.
+Version 2.0.1 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. Läuft auf Linux und macOS.
 
 ### 📸 Screenshot
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.1] - 2026-07-10
+
+- chore: update GitHub Actions to use latest versions of checkout and release actions
+- fix: update version extraction to use first match in builder script
+- feat(ci): add permissions for security events in CI/CD pipeline feat(tests): update version assertion regex in test runner
+- chore: update actions/cache and actions/codeql-action versions, fix version extraction in CI/CD scripts
+
+
+
 ## [2.0.0] - 2026-07-09
 
 - chore: remove outdated docs, gitignore private files, add _grep rg/grep fallback
