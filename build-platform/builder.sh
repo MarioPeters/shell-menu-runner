@@ -443,7 +443,7 @@ package_deb() {
     log_step "Building .deb package..."
 
     local version
-    version=$(grep -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
+    version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
     local pkg_dir="$BP_OUTPUT_DIR/shell-menu-runner_${version}_all"
 
     mkdir -p "$pkg_dir/DEBIAN"
@@ -484,7 +484,7 @@ package_tarball() {
     log_step "Building tarball..."
 
     local version
-    version=$(grep -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
+    version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
     local tarball="$BP_OUTPUT_DIR/shell-menu-runner-${version}.tar.gz"
 
     local tar_extras=()
@@ -534,7 +534,7 @@ deploy_github_release() {
     fi
 
     local version
-    version=$(grep -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
+    version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
 
     log_info "Creating release v$version..."
 
@@ -557,7 +557,7 @@ deploy_dockerhub() {
     fi
 
     local version
-    version=$(grep -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
+    version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
 
     docker tag shell-menu-runner:latest "mariopeters/shell-menu-runner:$version"
     docker tag shell-menu-runner:latest mariopeters/shell-menu-runner:latest
