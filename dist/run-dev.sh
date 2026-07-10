@@ -17,7 +17,7 @@ fi
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="2.0.1"
+readonly VERSION="2.0.2"
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly LOCAL_SETTINGS=".runrc"
