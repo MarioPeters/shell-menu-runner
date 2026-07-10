@@ -307,6 +307,7 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
 fi
 
 cecho "${C_DIM}→ Adding files...${C_RST}"
+make dev 2>/dev/null || true   # sync dist/run-dev.sh to current run.sh before committing
 git add src/00-header.sh run.sh dist/ README.md CHANGELOG.md install.sh
 cecho "${C_DIM}→ Creating commit...${C_RST}"
 git commit -m "chore(release): v$version"
