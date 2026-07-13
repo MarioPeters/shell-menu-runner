@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.2] - 2026-07-13
+
+- feat: update hotkey display and execution logic for improved clarity and usability
+
+
+
 ## [2.1.1] - 2026-07-13
 
 - feat: improve self-update process by streamlining version check and hash verification
