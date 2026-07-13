@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1] - 2026-07-13
+
+- feat: improve self-update process by streamlining version check and hash verification
+- feat: update hotkey number display in menu borders for improved clarity
+
+
+
 ## [2.1.0] - 2026-07-13
 
 - feat: embed hotkey numbers in menu borders for improved navigation
