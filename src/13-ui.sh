@@ -238,13 +238,13 @@ draw_menu() {
             fi
             first_in_row=0
 
-            # Hotkey number embedded in top border (row-first reading order).
-            # Uses ${_BORDER_TOP:0:1}=┌ and ${_BORDER_TOP:2}=dashes-from-2nd+┐
-            # so the visual width stays identical to the unmodified border.
+            # Hotkey number at top-right of border: ┌──────N┐
+            # Replace last dash (index inner-1..inner) with the digit, keep ┌ intact.
+            # ${_BORDER_TOP:0:$inner} = ┌ + (inner-1) dashes; append digit + ┐.
             local _item_num=$(( r * cols + c + 1 ))
             local _item_top
             if [ "$_item_num" -le 9 ]; then
-                _item_top="${_BORDER_TOP:0:1}${_item_num}${_BORDER_TOP:2}"
+                _item_top="${_BORDER_TOP:0:$inner}${_item_num}┐"
             else
                 _item_top="$_BORDER_TOP"
             fi
