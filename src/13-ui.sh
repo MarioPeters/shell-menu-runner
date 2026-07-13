@@ -238,35 +238,34 @@ draw_menu() {
             fi
             first_in_row=0
 
-            # Hotkey number at top-right of border: ┌──────N┐
-            # Replace last dash (index inner-1..inner) with the digit, keep ┌ intact.
-            # ${_BORDER_TOP:0:$inner} = ┌ + (inner-1) dashes; append digit + ┐.
-            local _item_num=$(( r * cols + c + 1 ))
-            local _item_top
-            if [ "$_item_num" -le 9 ]; then
-                _item_top="${_BORDER_TOP:0:$inner}${_item_num}┐"
-            else
-                _item_top="$_BORDER_TOP"
-            fi
-            top_line+="${border_color}${_item_top}${COLOR_RESET}"
+            # Hotkey number (column-first, left side) — revert to top border only
+            top_line+="${border_color}${_BORDER_TOP}${COLOR_RESET}"
             bot_line+="${border_color}${_BORDER_BOT}${COLOR_RESET}"
 
             # Content
             # shellcheck disable=SC2034
             IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$idx]}"
 
-            local marker="  "
+            # Hotkey prefix (2 chars) + marker (1 char) = 3 chars, same total as before.
+            # Keeping them separate avoids "1►" overlap: shows "1 ►" instead.
+            local _item_num=$(( idx + 1 ))
+            local _hotkey_pfx="  "
+            [ "$_item_num" -le 9 ] && _hotkey_pfx="${COLOR_DIM}${_item_num}${COLOR_RESET} "
+
+            local marker=" "
             local text_color="$COLOR_DIM"
             if [ "$idx" -eq "$selected_index" ]; then
-                marker="► "; text_color="$COLOR_BOLD"
+                marker="►"; text_color="$COLOR_BOLD"
             fi
             if [ -n "${multi_select_map[$idx]:-}" ]; then
-                marker="☑ "; text_color="$COLOR_INFO"
+                marker="☑"; text_color="$COLOR_INFO"
             fi
 
-            # Wide-char visual-width correction:
-            # printf "%-*s" counts code-points, but emoji (4-byte UTF-8) occupy 2 terminal cols.
-            # Compare char count (${#} in UTF-8) vs byte count (${#} in C locale) to detect extras.
+            # Wide-char visual-width correction.
+            # IMPORTANT: do NOT use printf "%-*s" for padding — bash 3.2 counts
+            # bytes (not visual columns) in the field-width, so emoji names come
+            # out 1-3 cols too narrow.  Instead we calculate the exact number of
+            # spaces needed and append them as plain ASCII.
             local _nc=${#_name} _nb _lc_was_set=0 _lc_saved=""
             [ -n "${LC_ALL+x}" ] && _lc_was_set=1 && _lc_saved="$LC_ALL"
             LC_ALL=C; _nb=${#_name}
@@ -278,14 +277,21 @@ draw_menu() {
                 local _trunc=$(( name_max - 3 - _wc_extra ))
                 [ "$_trunc" -lt 1 ] && _trunc=1
                 _name="${_name:0:$_trunc}..."
+                # Recalculate after truncation
+                _nc=${#_name}
+                local _nb2; LC_ALL=C; _nb2=${#_name}
+                if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+                _wc_extra=$(( (_nb2 - _nc) / 3 ))
             fi
-            # Pad: reduce target by extra cols so the box border stays aligned
-            local _pad_target=$(( name_max - _wc_extra ))
-            [ "$_pad_target" -lt 0 ] && _pad_target=0
-            local _padded
-            printf -v _padded "%-*s" "$_pad_target" "$_name"
+            # Pad with explicit spaces — visual width guaranteed regardless of locale
+            local _vis=$(( _nc + _wc_extra ))
+            local _nspaces=$(( name_max - _vis ))
+            [ "$_nspaces" -lt 0 ] && _nspaces=0
+            local _spaces=""
+            [ "$_nspaces" -gt 0 ] && printf -v _spaces '%*s' "$_nspaces" ''
+            local _padded="${_name}${_spaces}"
 
-            content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
+            content_line+="${border_color}│${COLOR_RESET}${_hotkey_pfx}${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
         done
 
         echo -e "${top_line}${_EL}"
@@ -414,11 +420,8 @@ main_interactive_loop() {
                     multi_select_map["$selected_index"]=1
                 fi
                 redraw_needed=1;;
-            [1-9]) # Hotkey: row-first visual position (matches the number shown in the box)
-                local _vis=$(( key - 1 ))          # 0-based visual index (row-first)
-                local _hkr=$(( _vis / cols ))       # visual row
-                local _hkc=$(( _vis % cols ))       # visual column
-                local hotkey_idx=$(( _hkr + _hkc * rows ))  # → array index (col-first)
+            [1-9]) # Hotkey: direct execution by column-first index (matches displayed number)
+                local hotkey_idx=$((key - 1))
                 if [ "$hotkey_idx" -lt "$num" ]; then
                     selected_index="$hotkey_idx"
                     IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
