@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.1.0] - 2026-07-13
+
+- feat: embed hotkey numbers in menu borders for improved navigation
+- feat: add ShellCheck configuration and improve script readability
+- refactor: remove profile selection on startup, use [p] in menu instead
+- feat: add hotkey number prefix for menu items 1-9
+- chore: update version to 2.0.3 and sync run-dev.sh before release
+
+
+
 ## [2.0.3] - 2026-07-10
 
 - refactor: improve conditional checks and error handling in config and utility scripts
