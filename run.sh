@@ -2059,7 +2059,7 @@ select_dropdown() {
     done
     local selected=0
     local num=${#options[@]}
-    
+
     while true; do
         # Cursor zurück auf 0,0 statt clear → kein Flicker (wie Hauptmenü)
         if [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_CUP:-}" ]; then
@@ -2078,7 +2078,7 @@ select_dropdown() {
         echo -e "\n${COLOR_DIM}$(msg dropdown_hint)${COLOR_RESET}"
         # Rest der Zeilen löschen damit alte Einträge nicht stehen bleiben
         [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_ED:-}" ] && echo -ne "$TPUT_ED"
-        
+
         key=$(read_key) || return 1
         case "$key" in
             $'\x1b[A'|$'\x1bOA') selected=$((selected - 1));;
@@ -2111,7 +2111,7 @@ render_progress_bar() {
 
 process_progress_output() {
     local line="$1"
-    
+
     # Check for [progress:X%] marker
     if [[ "$line" =~ \[progress:([0-9]+)%\] ]]; then
         local percent="${BASH_REMATCH[1]}"
@@ -2119,7 +2119,7 @@ process_progress_output() {
         echo ""
         return 0  # Suppress original line
     fi
-    
+
     # Check for [progress:X/Y] marker (e.g., [progress:3/10])
     if [[ "$line" =~ \[progress:([0-9]+)/([0-9]+)\] ]]; then
         local current="${BASH_REMATCH[1]}"
@@ -2129,7 +2129,7 @@ process_progress_output() {
         echo ""
         return 0  # Suppress original line
     fi
-    
+
     # Return line normally if no progress marker
     echo "$line"
     return 0  # 0 statt 1: stabiler bei set -e, semantisch korrekt (kein Fehler)
@@ -2244,7 +2244,7 @@ execute_task() {
     local cmd="$1"; local name="$2"; local desc="$3"; shift 3; local args=("$@")
     # dry_run_mode is set externally (--dry-run flag or future interactive 'd' key).
     # Do NOT reset here — it is consumed and cleared inside the dry-run block below.
-    
+
     # Show preview if interactive and not in CLI mode
     if [ "$is_interactive" -eq 1 ] && [ "${cli_mode:-0}" -eq 0 ]; then
         if ! preview_task "$cmd" "$name" "$desc"; then
@@ -2256,15 +2256,15 @@ execute_task() {
         execute_task_pipeline "$cmd"
         return $?
     fi
-    
+
     if [ "$is_interactive" -eq 1 ]; then
         tput cnorm 2>/dev/null
     fi
     if [ "${cli_mode:-0}" -eq 0 ]; then
         clear
-    fi 
+    fi
     echo -e "${COLOR_HEAD}$(msg executing)${COLOR_RESET} $name"
-    
+
     if [[ "$desc" == "[!]"* ]]; then
         echo -e "\n${COLOR_WARN}⚠ $(msg warning_label): ${desc#"[!] "}${COLOR_RESET}"
         read -p "$(msg confirm_prompt) " -n 1 -r; echo ""; [[ ! $REPLY =~ ^[Yy]$ ]] && return
@@ -2279,9 +2279,11 @@ execute_task() {
         cmd="${cmd%% \[depends:*\]}"
     fi
 
-    while [[ "$cmd" =~ \<\<([^:>]+)(:[^>]*)?\>\> ]]; do
+    while [[ "$cmd" =~ \<\<([^:=>]+)(=[^:>]*)?(:[^>]*)?\>\> ]]; do
         local p="${BASH_REMATCH[1]}"
-        local rest="${BASH_REMATCH[2]}" 
+        local default_spec="${BASH_REMATCH[2]}"  # "=value" or ""
+        local default_val="${default_spec#=}"     # strip leading "="
+        local rest="${BASH_REMATCH[3]}"
         if [[ "$rest" == :* ]]; then
             local opts_str="${rest:1}"
             echo -e "\n${COLOR_INFO}$(msg choose_for)${COLOR_RESET} $p"
@@ -2289,13 +2291,21 @@ execute_task() {
             r=$(select_dropdown "$opts_str")
             cmd="${cmd//\<\<"$p":"$opts_str"\>\>/$r}"
         else
-            echo -e "\n${COLOR_INFO}$(msg input_for)${COLOR_RESET} $p"; read -r -p "> " r; cmd="${cmd//<<$p>>/$r}"
+            echo -e "\n${COLOR_INFO}$(msg input_for)${COLOR_RESET} $p"
+            local r
+            if [ -n "$default_val" ]; then
+                read -r -p "[${default_val}] > " r
+                [ -z "$r" ] && r="$default_val"
+            else
+                read -r -p "> " r
+            fi
+            cmd="${cmd//<<${p}${default_spec}>>/$r}"
         fi
     done
-    
+
     set +u; echo -e "${COLOR_DIM}> $cmd ${args[*]:-}${COLOR_RESET}\n"; set -u
     save_state
-    
+
     if [ "$dry_run_mode" -eq 1 ]; then
         dry_run_mode=0  # Consume the flag — one-shot per execution
         echo -e "${COLOR_INFO}🔍 DRY-RUN: Command would execute as above${COLOR_RESET}"
@@ -2305,20 +2315,17 @@ execute_task() {
         fi
         return 0
     fi
-    
+
     # Measure execution time
     local start_time
     # Record terminal state before running task
     start_time=$(date +%s)
     :
-    
+
     # Execute with timeout
     local exit_status=0
     local log_file
     log_file=$(create_log_file "$name")
-    local temp_output=""
-    temp_output=$(mktemp) || { echo -e "${COLOR_ERR}Cannot create temp file${COLOR_RESET}"; return 1; }
-    trap '[[ -n "${temp_output:-}" ]] && rm -f "$temp_output"' RETURN
 
     # Bash string-op instead of $(dirname) subshell (called on every task execution)
     local config_dir="${config_path%/*}"
@@ -2336,14 +2343,25 @@ execute_task() {
             [ -f ".env" ] && set -a && source .env && set +a
             eval "$RUN_CMD $RUN_ARGS"
         '
+        # Stream output in real-time: pipe directly to log + terminal.
+        # set +e needed so a non-zero exit from the sub-process doesn't trigger
+        # errexit before PIPESTATUS is captured.
+        # trap '' INT: parent ignores Ctrl+C so only the child process is killed;
+        # the menu continues and shows a "Cancelled" message instead of exiting.
+        exec 3>>"$log_file"
+        set +e
+        trap '' INT
         if command -v timeout >/dev/null 2>&1; then
             timeout "$task_timeout" env \
                 RUN_MODE="$active_mode" \
                 RUN_DIR="$config_dir" \
                 RUN_CMD="$cmd" \
                 RUN_ARGS="${args[*]:-}" \
-                bash -c "$_exec_script" > "$temp_output" 2>&1
-            exit_status=$?
+                bash -c "$_exec_script" 2>&1 | while IFS= read -r line; do
+                    process_progress_output "$line"
+                    printf '%s\n' "$line" >&3
+                done
+            exit_status=${PIPESTATUS[0]}
             [ "$exit_status" -eq 124 ] && \
                 echo -e "\n${COLOR_ERR}$(msg task_timeout) (${task_timeout}s).${COLOR_RESET}"
         else
@@ -2352,41 +2370,40 @@ execute_task() {
                 RUN_DIR="$config_dir" \
                 RUN_CMD="$cmd" \
                 RUN_ARGS="${args[*]:-}" \
-                bash -c "$_exec_script" > "$temp_output" 2>&1
-            exit_status=$?
+                bash -c "$_exec_script" 2>&1 | while IFS= read -r line; do
+                    process_progress_output "$line"
+                    printf '%s\n' "$line" >&3
+                done
+            exit_status=${PIPESTATUS[0]}
         fi
+        set -e
+        exec 3>&-
+        # Restore the menu's Ctrl+C handler now that the child has finished
+        [ "${is_interactive:-0}" -eq 1 ] && trap 'restore_term; cleanup_wrapper; exit 130' INT
     fi
-    
-    # Ausgabe verarbeiten: Log-FD einmal öffnen statt pro Zeile open/write/close
-    exec 3>>"$log_file"
-    while IFS= read -r line; do
-        process_progress_output "$line"
-        printf '%s\n' "$line" >&3
-    done < "$temp_output"
-    exec 3>&-
-    
+
     local end_time
     end_time=$(date +%s)
     task_execution_time=$((end_time - start_time))
-    
-    if [ "$exit_status" -eq 0 ] || [ "$exit_status" -eq 124 ]; then
-        if [ "$exit_status" -eq 124 ]; then
-            echo -e "\n${COLOR_ERR}$(msg task_failed) (timeout).${COLOR_RESET}"
-        else
-            echo -e "\n${COLOR_SEL}✔ $(msg task_success)${COLOR_RESET}"
-        fi
+
+    if [ "$exit_status" -eq 0 ]; then
+        echo -e "\n${COLOR_SEL}✔ $(msg task_success)${COLOR_RESET}"
+    elif [ "$exit_status" -eq 130 ]; then
+        echo -e "\n${COLOR_WARN}⚡ Abgebrochen (Ctrl+C)${COLOR_RESET}"
+    elif [ "$exit_status" -eq 124 ]; then
+        echo -e "\n${COLOR_ERR}$(msg task_failed) (timeout).${COLOR_RESET}"
     else
         echo -e "\n${COLOR_ERR}$(msg task_failed) (exit $exit_status).${COLOR_RESET}"
     fi
-    
+
     # Show execution time
     echo -e "${COLOR_DIM}⏱ ${task_execution_time}s${COLOR_RESET}"
-    
+
     # Log to history
     add_to_history "$name" "$exit_status" "$task_execution_time"
 
     echo -e "${COLOR_DIM}Log: $log_file${COLOR_RESET}"
-    
+
     # Invalidate menu cache after task execution (config may have changed)
     last_config_mtime=0
 

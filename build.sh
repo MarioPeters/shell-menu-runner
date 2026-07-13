@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly SRC_DIR="$SCRIPT_DIR/src"
 readonly OUTPUT_FILE="$SCRIPT_DIR/run.sh"
 readonly TEMP_FILE="/tmp/run-build-$$.sh"

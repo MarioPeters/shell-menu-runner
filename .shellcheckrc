@@ -1,0 +1,11 @@
+# ShellCheck configuration for shell-menu-runner
+#
+# SC2034 (variable appears unused) and SC2154 (variable referenced but not
+# assigned) are structural false positives in this project:
+# The source files in src/ are concatenated by build.sh into a single run.sh.
+# ShellCheck sees each src/*.sh in isolation and doesn't know that variables
+# defined in one module (e.g. VERSION in 00-header.sh) are used in another
+# (e.g. 16-main.sh). Running `make lint` checks the combined run.sh where all
+# cross-module references are resolved — and that file passes cleanly.
+disable=SC2034
+disable=SC2154
