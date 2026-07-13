@@ -254,6 +254,11 @@ draw_menu() {
                 marker="☑ "; text_color="$COLOR_INFO"
             fi
 
+            # Hotkey number prefix: items 1-9 show their 1-based index (replaces leading space)
+            local _item_num=$(( idx + 1 ))
+            local _hotkey_pfx=" "
+            [ "$_item_num" -le 9 ] && _hotkey_pfx="${COLOR_DIM}${_item_num}${COLOR_RESET}"
+
             # Wide-char visual-width correction:
             # printf "%-*s" counts code-points, but emoji (4-byte UTF-8) occupy 2 terminal cols.
             # Compare char count (${#} in UTF-8) vs byte count (${#} in C locale) to detect extras.
@@ -275,7 +280,7 @@ draw_menu() {
             local _padded
             printf -v _padded "%-*s" "$_pad_target" "$_name"
 
-            content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
+            content_line+="${border_color}│${COLOR_RESET}${_hotkey_pfx}${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
         done
 
         echo -e "${top_line}${_EL}"
