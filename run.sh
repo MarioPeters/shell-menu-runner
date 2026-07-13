@@ -3549,23 +3549,7 @@ self_update() {
     local tmp_file
     tmp_file=$(mktemp /tmp/run_update.XXXXXX) || { echo -e "${COLOR_ERR}$(msg temp_file_fail)${COLOR_RESET}"; return 1; }
     if curl -fsSL "$REPO_RAW_URL" -o "$tmp_file"; then
-        # ${RUN_EXPECTED_SHA256:-} guards against 'unbound variable' with set -u
-        if [ -n "${RUN_EXPECTED_SHA256:-}" ]; then
-            local dl_hash=""
-            dl_hash=$(file_sha256 "$tmp_file") || echo -e "${COLOR_WARN}$(msg hash_skipped)${COLOR_RESET}"
-            if [ -n "$dl_hash" ] && [ "$dl_hash" != "${RUN_EXPECTED_SHA256:-}" ]; then
-                echo -e "${COLOR_ERR}$(msg hash_mismatch) ${RUN_EXPECTED_SHA256:-} != $dl_hash${COLOR_RESET}"
-                rm -f "$tmp_file"
-                return 1
-            fi
-        else
-            echo -e "${COLOR_WARN}$(msg no_hash)${COLOR_RESET}"
-            read -p "$(msg continue_prompt) " -n 1 -r; echo ""
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                rm -f "$tmp_file"
-                return 1
-            fi
-        fi
+        # Version check first — no hash prompt needed when already up to date
         local new_ver=""
         new_ver=$(_grep -m1 "readonly VERSION=" "$tmp_file" 2>/dev/null | cut -d'"' -f2 2>/dev/null || true)
         if [ -z "$new_ver" ]; then
@@ -3578,6 +3562,23 @@ self_update() {
             rm -f "$tmp_file"
         else
             echo -e "${COLOR_WARN}$(msg update_found) $VERSION -> $new_ver${COLOR_RESET}"
+            # Hash verification only when an actual update is about to be installed
+            if [ -n "${RUN_EXPECTED_SHA256:-}" ]; then
+                local dl_hash=""
+                dl_hash=$(file_sha256 "$tmp_file") || echo -e "${COLOR_WARN}$(msg hash_skipped)${COLOR_RESET}"
+                if [ -n "$dl_hash" ] && [ "$dl_hash" != "${RUN_EXPECTED_SHA256:-}" ]; then
+                    echo -e "${COLOR_ERR}$(msg hash_mismatch) ${RUN_EXPECTED_SHA256:-} != $dl_hash${COLOR_RESET}"
+                    rm -f "$tmp_file"
+                    return 1
+                fi
+            else
+                echo -e "${COLOR_WARN}$(msg no_hash)${COLOR_RESET}"
+                read -p "$(msg continue_prompt) " -n 1 -r; echo ""
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    rm -f "$tmp_file"
+                    return 1
+                fi
+            fi
             local install_path
             install_path=$(command -v run)
             if [ -z "$install_path" ]; then
