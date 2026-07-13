@@ -238,7 +238,17 @@ draw_menu() {
             fi
             first_in_row=0
 
-            top_line+="${border_color}${_BORDER_TOP}${COLOR_RESET}"
+            # Hotkey number embedded in top border (row-first reading order).
+            # Uses ${_BORDER_TOP:0:1}=┌ and ${_BORDER_TOP:2}=dashes-from-2nd+┐
+            # so the visual width stays identical to the unmodified border.
+            local _item_num=$(( r * cols + c + 1 ))
+            local _item_top
+            if [ "$_item_num" -le 9 ]; then
+                _item_top="${_BORDER_TOP:0:1}${_item_num}${_BORDER_TOP:2}"
+            else
+                _item_top="$_BORDER_TOP"
+            fi
+            top_line+="${border_color}${_item_top}${COLOR_RESET}"
             bot_line+="${border_color}${_BORDER_BOT}${COLOR_RESET}"
 
             # Content
@@ -253,11 +263,6 @@ draw_menu() {
             if [ -n "${multi_select_map[$idx]:-}" ]; then
                 marker="☑ "; text_color="$COLOR_INFO"
             fi
-
-            # Hotkey number prefix: items 1-9 show their 1-based index (replaces leading space)
-            local _item_num=$(( idx + 1 ))
-            local _hotkey_pfx=" "
-            [ "$_item_num" -le 9 ] && _hotkey_pfx="${COLOR_DIM}${_item_num}${COLOR_RESET}"
 
             # Wide-char visual-width correction:
             # printf "%-*s" counts code-points, but emoji (4-byte UTF-8) occupy 2 terminal cols.
@@ -280,7 +285,7 @@ draw_menu() {
             local _padded
             printf -v _padded "%-*s" "$_pad_target" "$_name"
 
-            content_line+="${border_color}│${COLOR_RESET}${_hotkey_pfx}${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
+            content_line+="${border_color}│${COLOR_RESET} ${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
         done
 
         echo -e "${top_line}${_EL}"
@@ -409,8 +414,11 @@ main_interactive_loop() {
                     multi_select_map["$selected_index"]=1
                 fi
                 redraw_needed=1;;
-            [1-9]) # Hotkey: direct execution by number
-                local hotkey_idx=$((key - 1))
+            [1-9]) # Hotkey: row-first visual position (matches the number shown in the box)
+                local _vis=$(( key - 1 ))          # 0-based visual index (row-first)
+                local _hkr=$(( _vis / cols ))       # visual row
+                local _hkc=$(( _vis % cols ))       # visual column
+                local hotkey_idx=$(( _hkr + _hkc * rows ))  # → array index (col-first)
                 if [ "$hotkey_idx" -lt "$num" ]; then
                     selected_index="$hotkey_idx"
                     IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
