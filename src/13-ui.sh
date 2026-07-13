@@ -450,6 +450,7 @@ main_interactive_loop() {
                     _reinit_menu
                     num=${#menu_options[@]}; rows=$_layout_rows; cols=$_layout_cols
                 fi
+                clear  # remove profile-menu artefacts before redraw
                 if [ "${is_interactive:-0}" -eq 1 ]; then
                     set_raw_mode
                     drain_stdin

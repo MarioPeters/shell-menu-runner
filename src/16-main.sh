@@ -375,25 +375,7 @@ if [ "$DEBUG_MODE" -eq 1 ]; then
     set -x
 fi
 
-set +u  # Disable nounset for array check
-if [ "${#args[@]}" -eq 0 ] && [ -z "$config_path" ] && [ "${cli_list_mode:-0}" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
-    set -u  # Re-enable nounset
-    profiles_list=$(list_available_profiles)
-    if [ -n "$profiles_list" ]; then
-        # Bash-String-Op statt echo|tr-Pipe (kein Fork)
-        echo -e "${COLOR_INFO}Profiles available:${COLOR_RESET} ${profiles_list//$'\n'/ }"
-        echo -e "${COLOR_DIM}Press [p] to choose a profile or any other key to continue...${COLOR_RESET}"
-        key=$(read_key) || key=""
-        # Drain any remaining bytes (arrow-key sequences etc.) so they don't
-        # leak into the main interactive loop that starts afterwards.
-        drain_stdin
-        if [ "$key" = "p" ] || [ "$key" = "P" ]; then
-            select_profile_menu || true
-        fi
-    fi
-else
-    set -u  # Re-enable nounset if condition was false
-fi
+# Profile selection on startup was removed — use [p] in the menu instead.
 
 set +u  # Disable nounset for array check
 if [ "${#args[@]}" -gt 0 ]; then
