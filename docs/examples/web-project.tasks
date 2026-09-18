@@ -2,39 +2,53 @@
 # Copy to project root as .tasks
 
 # Frontend
-0|FE: Install|cd frontend && npm install|Frontend: Install dependencies
-1|FE: Dev|cd frontend && npm run dev|Frontend: Start dev server
-2|FE: Build|cd frontend && npm run build|Frontend: Build production
-3|FE: Lint|cd frontend && npm run lint|Frontend: Lint code
-4|FE: Test|cd frontend && npm run test|Frontend: Run tests
+0|Frontend|SUB|Frontend tasks
+1|FE Install|cd frontend && npm install|Frontend: Install dependencies
+1|FE Dev|cd frontend && npm run dev|Frontend: Start dev server
+1|FE Build|cd frontend && npm run build|Frontend: Build production
+1|FE Lint|cd frontend && npm run lint|Frontend: Lint code
+1|FE Test|cd frontend && npm run test|Frontend: Run tests
+1|Back|BACK
 
 # Backend
-5|BE: Install|cd backend && npm install|Backend: Install dependencies
-6|BE: Dev|cd backend && npm run dev|Backend: Start dev server
-7|BE: Build|cd backend && npm run build|Backend: Build production
-8|BE: Lint|cd backend && npm run lint|Backend: Lint code
-9|BE: Test|cd backend && npm run test|Backend: Run tests
+0|Backend|SUB|Backend tasks
+1|BE Install|cd backend && npm install|Backend: Install dependencies
+1|BE Dev|cd backend && npm run dev|Backend: Start dev server
+1|BE Build|cd backend && npm run build|Backend: Build production
+1|BE Lint|cd backend && npm run lint|Backend: Lint code
+1|BE Test|cd backend && npm run test|Backend: Run tests
+1|Back|BACK
 
 # Database
-10|DB: Migrate|cd backend && npm run db:migrate|Database: Run migrations
-11|DB: Seed|cd backend && npm run db:seed|Database: Seed data
-12|DB: Reset|cd backend && npm run db:reset|Database: Reset
+0|Database|SUB|Database tasks
+1|DB Migrate|cd backend && npm run db:migrate|Database: Run migrations
+1|DB Seed|cd backend && npm run db:seed|Database: Seed data
+1|DB Reset|cd backend && npm run db:reset|Database: Reset
+1|Back|BACK
 
 # Quality
-12|QA: Full|npm run lint && npm run test && npm run build depends:3,4,8,9,2,7|Quality: Full checks
+0|QA Full|npm run lint && npm run test && npm run build|Quality: Full checks
 
 # Docker
-13|Docker: Build|docker-compose build|Docker: Build all
-14|Docker: Up|docker-compose up|Docker: Start services
-15|Docker: Down|docker-compose down|Docker: Stop services
+0|Docker|SUB|Docker operations
+1|Docker Build|docker-compose build|Docker: Build all
+1|Docker Up|docker-compose up|Docker: Start services
+1|Docker Down|docker-compose down|Docker: Stop services
+1|Back|BACK
 
 # Deployment
-16|Deploy: Dev|docker-compose -f docker-compose.dev.yml up -d|Deploy: Dev environment
-17|Deploy: Prod|docker build -t app:prod . && docker push app:prod && kubectl apply -f k8s/|Deploy: Production
+0|Deployment|SUB|Deployment tasks
+1|Deploy Dev|docker-compose -f docker-compose.dev.yml up -d|Deploy: Dev environment
+1|Deploy Prod|docker build -t app:prod . && docker push app:prod && kubectl apply -f k8s/|Deploy: Production
+1|Back|BACK
 
 # Monitoring
-18|Logs: Frontend|cd frontend && npm run logs|Logs: Frontend
-19|Logs: Backend|cd backend && npm run logs|Logs: Backend
+0|Monitoring|SUB|Service logs
+1|Logs Frontend|cd frontend && npm run logs|Logs: Frontend
+1|Logs Backend|cd backend && npm run logs|Logs: Backend
+1|Back|BACK
 
 # Full Setup
-20|Full Setup|run --across backend,frontend install && run db:migrate depends:0,5|Setup: Everything
+0|Full Setup|run --across backend,frontend install && run db:migrate [depends: FE Install,BE Install]|Setup: Everything
+
+0|Exit|EXIT|Close menu

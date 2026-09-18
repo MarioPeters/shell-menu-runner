@@ -26,6 +26,8 @@ is_interactive=1
 is_ssh_session=0
 ssh_hint_shown=0
 last_config_mtime=0
+last_config_level=0
+last_config_stack=""
 cached_menu_options=""
 DEBUG_MODE=0
 # shellcheck disable=SC2034
@@ -184,7 +186,33 @@ detect_config_files() {
 
 merge_configs() {
     # Merge all config files into one stream (faster than loop+cat)
-    cat "${task_config_files[@]}" 2>/dev/null || true
+    if [ "${#task_config_files[@]}" -gt 0 ]; then
+        cat "${task_config_files[@]}" 2>/dev/null || true
+    elif [ -f "$config_path" ]; then
+        cat "$config_path"
+    elif [ -f ".tasks" ]; then
+        cat ".tasks"
+    fi
+}
+
+get_all_tasks() {
+    local result=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -z "$line" ] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^TIMEOUT= ]] && continue
+        [[ "$line" =~ ^VAR_ ]] && continue
+        [[ "$line" =~ ^THEME: ]] && continue
+        [[ "$line" =~ ^TITLE: ]] && continue
+
+        IFS='|' read -r level name cmd desc <<< "$line"
+        [ -z "$name" ] && continue
+        if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
+            continue
+        fi
+        result+="${level}|${name}|${cmd}|${desc}"$'\n'
+    done < <(merge_configs)
+    printf "%s" "$result"
 }
 
 file_sha256() {

@@ -4,50 +4,66 @@
 
 # Setup
 0|Install|npm install|Install dependencies
-1|Db Init|npm run db:init|Initialize database
-2|Seeds|npm run db:seed|Seed test data
+0|Db Init|npm run db:init|Initialize database
+0|Seeds|npm run db:seed|Seed test data
 
 # Development
-3|Dev|npm run dev|Start dev server (with reload)
-4|Test Local|npm run test|Run tests locally
-5|Build Local|npm run build|Build locally
+0|Dev|npm run dev|Start dev server (with reload)
+0|Test Local|npm run test|Run tests locally
+0|Build Local|npm run build|Build locally
 
 # Quality Assurance
-6|Lint|npm run lint|Lint code
-7|Format|npm run format|Format code
-8|Type Check|npm run type-check|Type checking
-9|QA|npm run lint && npm run format && npm run type-check depends:6,7,8|Full QA
+0|Quality|SUB|Quality assurance
+1|Lint|npm run lint|Lint code
+1|Format|npm run format|Format code
+1|Type Check|npm run type-check|Type checking
+1|QA|npm run lint && npm run format && npm run type-check [depends: Lint,Format,Type Check]|Full QA
+1|Back|BACK
 
 # Testing
-10|Unit Tests|npm run test:unit|Unit tests
-11|Integration|npm run test:integration|Integration tests
-12|E2E|npm run test:e2e|End-to-end tests
-13|All Tests|npm run test depends:10,11,12|All tests (parallel)
-14|Coverage|npm run test:coverage|Coverage report
+0|Testing|SUB|Testing suite
+1|Unit Tests|npm run test:unit|Unit tests
+1|Integration|npm run test:integration|Integration tests
+1|E2E|npm run test:e2e|End-to-end tests
+1|All Tests|npm run test [depends: Unit Tests,Integration,E2E]|All tests (parallel)
+1|Coverage|npm run test:coverage|Coverage report
+1|Back|BACK
 
 # Docker
-15|Docker Build|docker build -t auth:latest .|Build Docker image
-16|Docker Run|docker run -p 3001:3001 auth:latest|Run in Docker
-17|Docker Test|docker build -f Dockerfile.test -t auth:test . && docker run auth:test|Test in Docker
+0|Docker|SUB|Docker tasks
+1|Docker Build|docker build -t auth:latest .|Build Docker image
+1|Docker Run|docker run -p 3001:3001 auth:latest|Run in Docker
+1|Docker Test|docker build -f Dockerfile.test -t auth:test . && docker run auth:test|Test in Docker
+1|Back|BACK
 
 # Deployment
-18|Deploy Dev|kubectl apply -f k8s/dev/auth.yaml|Deploy to dev
-19|Deploy Stage|kubectl apply -f k8s/staging/auth.yaml|Deploy to staging
-20|Deploy Prod|kubectl apply -f k8s/prod/auth.yaml|Deploy to production
+0|Deployment|SUB|Deployment tasks
+1|Deploy Dev|kubectl apply -f k8s/dev/auth.yaml|Deploy to dev
+1|Deploy Stage|kubectl apply -f k8s/staging/auth.yaml|Deploy to staging
+1|Deploy Prod|kubectl apply -f k8s/prod/auth.yaml|Deploy to production
+1|Back|BACK
 
 # Status
-21|Health|curl -s http://localhost:3001/health | jq|Check health
-22|Status|kubectl get pods -l app=auth|Pod status
-23|Logs|kubectl logs -f deployment/auth|View logs
-24|Metrics|curl -s http://localhost:3001/metrics|Metrics
+0|Status|SUB|Service status
+1|Health|curl -s http://localhost:3001/health | jq|Check health
+1|Status Check|kubectl get pods -l app=auth|Pod status
+1|Logs|kubectl logs -f deployment/auth|View logs
+1|Metrics|curl -s http://localhost:3001/metrics|Metrics
+1|Back|BACK
 
 # Maintenance
-25|Restart Dev|kubectl rollout restart deployment/auth -n dev|Restart dev
-26|Restart Stage|kubectl rollout restart deployment/auth -n staging|Restart staging
-27|Restart Prod|kubectl rollout restart deployment/auth -n prod|Restart prod
-28|Rollback|kubectl rollout undo deployment/auth|Rollback to previous
+0|Maintenance|SUB|Maintenance & rollout
+1|Restart Dev|kubectl rollout restart deployment/auth -n dev|Restart dev
+1|Restart Stage|kubectl rollout restart deployment/auth -n staging|Restart staging
+1|Restart Prod|kubectl rollout restart deployment/auth -n prod|Restart prod
+1|Rollback|kubectl rollout undo deployment/auth|Rollback to previous
+1|Back|BACK
 
 # Database
-29|Db Migrate|npm run db:migrate|Run migrations
-30|Db Rollback|npm run db:rollback|Rollback migrations
-31|Db Reset|npm run db:reset|Reset database
+0|Database|SUB|Database migrations
+1|Db Migrate|npm run db:migrate|Run migrations
+1|Db Rollback|npm run db:rollback|Rollback migrations
+1|Db Reset|npm run db:reset|Reset database
+1|Back|BACK
+
+0|Exit|EXIT|Close menu

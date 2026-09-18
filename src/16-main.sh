@@ -435,21 +435,23 @@ if [ "$is_interactive" -eq 0 ] && [ "$is_ssh_session" -eq 1 ] && [ "$ssh_hint_sh
     ssh_hint_shown=1
 fi
 
+# CLI mode dispatch
+if [ "${cli_list_mode:-0}" -eq 1 ]; then
+    IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    cli_list_tasks
+    exit 0
+fi
+if [ -n "${cli_run_query:-}" ]; then
+    IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    cli_run_task "$cli_run_query"
+    exit $?
+fi
+
 # Load menu options once before loop
 IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1
-
-# CLI mode dispatch — must come after menu_options is populated
-if [ "${cli_list_mode:-0}" -eq 1 ]; then
-    cli_list_tasks
-    exit 0
-fi
-if [ -n "${cli_run_query:-}" ]; then
-    cli_run_task "$cli_run_query"
-    exit $?
-fi
 
 # Main interactive loop is in 13-ui.sh
 main_interactive_loop

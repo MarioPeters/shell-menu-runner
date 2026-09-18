@@ -846,6 +846,273 @@ test_cli_run_exit_code() {
 }
 
 # ==============================================================================
+#  POSITIONAL SUBMENU TESTS
+# ==============================================================================
+
+test_positional_submenu_parsing_level0() {
+    test_start "Submenu: level 0 returns top-level tasks and submenus"
+
+    local tmp_dir="/tmp/test_sub0_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<'EOF'
+0|Install|./install.sh|Install locally
+0|Release|SUB|Release management
+1|Interactive|./scripts/release.sh|Full release
+1|Docs|SUB|Documentation
+2|Changelog|open CHANGELOG.md|Open changelog
+2|Back|BACK
+1|Back|BACK
+0|Tools|SUB|Tools menu
+1|Lint|make lint|Run linter
+1|Back|BACK
+0|Exit|EXIT|Close menu
+EOF
+
+    local result
+    result=$(bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/02-utils.sh'  2>/dev/null
+        source '$ROOT_DIR/src/08-tags.sh'   2>/dev/null
+        source '$ROOT_DIR/src/13-ui.sh'     2>/dev/null
+        config_path='$tmp_dir/.tasks'
+        current_level=0
+        history_name_stack=('Main')
+        RUN_CACHE_PROFILES=0
+        task_config_files=()
+        get_menu_options 2>/dev/null
+    ")
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$result" "Install" \
+       && assert_contains "$result" "Release" \
+       && assert_contains "$result" "Tools" \
+       && assert_contains "$result" "Exit" \
+       && ! assert_contains "$result" "Interactive" \
+       && ! assert_contains "$result" "Changelog" \
+       && ! assert_contains "$result" "Lint"; then
+        test_pass
+    else
+        test_fail "Level 0 options unexpected: $result"
+    fi
+}
+
+test_positional_submenu_parsing_level1() {
+    test_start "Submenu: level 1 returns only children of active parent"
+
+    local tmp_dir="/tmp/test_sub1_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<'EOF'
+0|Install|./install.sh|Install locally
+0|Release|SUB|Release management
+1|Interactive|./scripts/release.sh|Full release
+1|Dry-run|./scripts/release.sh --dry-run|Preview release
+1|Docs|SUB|Documentation
+2|Changelog|open CHANGELOG.md|Open changelog
+2|Back|BACK
+1|Back|BACK
+0|Tools|SUB|Tools menu
+1|Lint|make lint|Run linter
+1|Back|BACK
+0|Exit|EXIT|Close menu
+EOF
+
+    local result
+    result=$(bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/02-utils.sh'  2>/dev/null
+        source '$ROOT_DIR/src/08-tags.sh'   2>/dev/null
+        source '$ROOT_DIR/src/13-ui.sh'     2>/dev/null
+        config_path='$tmp_dir/.tasks'
+        current_level=1
+        history_name_stack=('Main' 'Release')
+        RUN_CACHE_PROFILES=0
+        task_config_files=()
+        get_menu_options 2>/dev/null
+    ")
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$result" "Interactive" \
+       && assert_contains "$result" "Dry-run" \
+       && assert_contains "$result" "Docs" \
+       && assert_contains "$result" "Back" \
+       && ! assert_contains "$result" "Install" \
+       && ! assert_contains "$result" "Lint" \
+       && ! assert_contains "$result" "Changelog"; then
+        test_pass
+    else
+        test_fail "Level 1 options for 'Release' unexpected: $result"
+    fi
+}
+
+test_positional_submenu_parsing_nested_level2() {
+    test_start "Submenu: level 2 returns only children of active nested parent"
+
+    local tmp_dir="/tmp/test_sub2_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<'EOF'
+0|Install|./install.sh|Install locally
+0|Release|SUB|Release management
+1|Interactive|./scripts/release.sh|Full release
+1|Docs|SUB|Documentation
+2|Changelog|open CHANGELOG.md|Open changelog
+2|Release Notes|open README.dev.md|Local release checklist
+2|Back|BACK
+1|Back|BACK
+0|Tools|SUB|Tools menu
+1|Docs|SUB|Tools Documentation
+2|Tool Docs|open tools.md|Open tool docs
+2|Back|BACK
+1|Back|BACK
+0|Exit|EXIT|Close menu
+EOF
+
+    local result
+    result=$(bash -c "
+        set +e
+        source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/02-utils.sh'  2>/dev/null
+        source '$ROOT_DIR/src/08-tags.sh'   2>/dev/null
+        source '$ROOT_DIR/src/13-ui.sh'     2>/dev/null
+        config_path='$tmp_dir/.tasks'
+        current_level=2
+        history_name_stack=('Main' 'Release' 'Docs')
+        RUN_CACHE_PROFILES=0
+        task_config_files=()
+        get_menu_options 2>/dev/null
+    ")
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$result" "Changelog" \
+       && assert_contains "$result" "Release Notes" \
+       && ! assert_contains "$result" "Tool Docs" \
+       && ! assert_contains "$result" "Interactive"; then
+        test_pass
+    else
+        test_fail "Level 2 options for 'Release > Docs' unexpected: $result"
+    fi
+}
+
+test_cli_list_across_submenus() {
+    test_start "cli --list: shows executable tasks across all submenus without SUB/BACK/EXIT"
+
+    local tmp_dir="/tmp/test_cli_list_sub_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<'EOF'
+0|Top Task|echo top|Top level task
+0|Sub Menu|SUB|Submenu
+1|Child Task|echo child|Child level task
+1|Nested Menu|SUB|Nested
+2|Grandchild Task|echo grandchild|Grandchild task
+2|Back|BACK
+1|Back|BACK
+0|Exit|EXIT|Close menu
+EOF
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --list 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "Top Task" \
+       && assert_contains "$output" "Child Task" \
+       && assert_contains "$output" "Grandchild Task" \
+       && ! assert_contains "$output" "Sub Menu" \
+       && ! assert_contains "$output" "Nested Menu" \
+       && ! assert_contains "$output" "Back" \
+       && ! assert_contains "$output" "Exit"; then
+        test_pass
+    else
+        test_fail "Expected all executable tasks in --list, got: $output"
+    fi
+}
+
+test_cli_run_submenu_task() {
+    test_start "cli --run: executes tasks located in submenus"
+
+    local tmp_dir="/tmp/test_cli_run_sub_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<'EOF'
+0|Top Task|echo top|Top
+0|Sub Menu|SUB|Submenu
+1|Sub Task|printf hello_from_submenu|Submenu task
+1|Back|BACK
+0|Exit|EXIT|Close
+EOF
+
+    local output
+    output=$(cd "$tmp_dir" && "$RUN_SCRIPT" --run "Sub Task" 2>&1 || true)
+    rm -rf "$tmp_dir"
+
+    if assert_contains "$output" "hello_from_submenu"; then
+        test_pass
+    else
+        test_fail "Expected 'hello_from_submenu' in output, got: $output"
+    fi
+}
+
+test_dependency_across_submenus() {
+    test_start "Dependency execution across submenus"
+
+    local tmp_dir="/tmp/test_dep_sub_$$"
+    local dep_marker="/tmp/dep_sub_marker_$$"
+    local main_marker="/tmp/main_sub_marker_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<EOF
+0|Main Task|touch $main_marker [depends: Sub Task]|Main task with submenu dependency
+0|Operations|SUB|Operations
+1|Sub Task|touch $dep_marker|Dependency task in submenu
+1|Back|BACK
+0|Exit|EXIT|Close
+EOF
+
+    (cd "$tmp_dir" && "$RUN_SCRIPT" --run "Main Task" >/dev/null 2>&1) || true
+
+    local dep_exists=0 main_exists=0
+    [ -f "$dep_marker" ] && dep_exists=1
+    [ -f "$main_marker" ] && main_exists=1
+    rm -rf "$tmp_dir" "$dep_marker" "$main_marker"
+
+    if [ $dep_exists -eq 1 ] && [ $main_exists -eq 1 ]; then
+        test_pass
+    else
+        test_fail "Dependencies across submenus failed (dep=$dep_exists main=$main_exists)"
+    fi
+}
+
+test_pipeline_across_submenus() {
+    test_start "Pipeline execution across submenus"
+
+    local tmp_dir="/tmp/test_pipe_sub_$$"
+    local step1_marker="/tmp/step1_sub_$$"
+    local step2_marker="/tmp/step2_sub_$$"
+    mkdir -p "$tmp_dir"
+    cat > "$tmp_dir/.tasks" <<EOF
+0|Pipeline|tasks:Step One;Step Two|Run pipeline across submenus
+0|Group One|SUB|Group 1
+1|Step One|touch $step1_marker|First step
+1|Back|BACK
+0|Group Two|SUB|Group 2
+1|Step Two|touch $step2_marker|Second step
+1|Back|BACK
+0|Exit|EXIT|Close
+EOF
+
+    (cd "$tmp_dir" && "$RUN_SCRIPT" --run "Pipeline" >/dev/null 2>&1) || true
+
+    local s1_exists=0 s2_exists=0
+    [ -f "$step1_marker" ] && s1_exists=1
+    [ -f "$step2_marker" ] && s2_exists=1
+    rm -rf "$tmp_dir" "$step1_marker" "$step2_marker"
+
+    if [ $s1_exists -eq 1 ] && [ $s2_exists -eq 1 ]; then
+        test_pass
+    else
+        test_fail "Pipeline across submenus failed (s1=$s1_exists s2=$s2_exists)"
+    fi
+}
+
+# ==============================================================================
 #  TEST EXECUTION
 # ==============================================================================
 
@@ -916,6 +1183,16 @@ run_all_tests() {
     test_cli_run_by_name
     test_cli_run_not_found
     test_cli_run_exit_code
+
+    echo ""
+    echo "${C_INFO}» Submenu & Hierarchy Tests${C_RST}"
+    test_positional_submenu_parsing_level0
+    test_positional_submenu_parsing_level1
+    test_positional_submenu_parsing_nested_level2
+    test_cli_list_across_submenus
+    test_cli_run_submenu_task
+    test_dependency_across_submenus
+    test_pipeline_across_submenus
 
     echo ""
     echo "${C_INFO}» Performance Tests${C_RST}"

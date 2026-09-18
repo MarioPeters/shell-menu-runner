@@ -77,26 +77,29 @@ EOF
 }
 
 get_menu_options() {
+    local current_stack_key=""
+    if [ "$current_level" -gt 0 ]; then
+        current_stack_key="${history_name_stack[*]}"
+    fi
+
     # Cache check for performance
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -n "$cached_menu_options" ]; then
         if [ -f "$config_path" ]; then
             local current_mtime
             current_mtime=$(get_file_mtime "$config_path")
-            if [ "$current_mtime" -eq "$last_config_mtime" ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ]; then
-                echo "$cached_menu_options"
+            if [ "$current_mtime" -eq "$last_config_mtime" ] \
+               && [ "$current_level" -eq "${last_config_level:-0}" ] \
+               && [ "$current_stack_key" = "${last_config_stack:-}" ] \
+               && [ -z "$filter_query" ] && [ -z "$tag_filter" ]; then
+                printf "%s" "$cached_menu_options"
                 return 0
             fi
         fi
     fi
 
     # Build menu options
-    local level_str=""
     local search_pattern=""
     local tag_pattern=""
-
-    if [ "$current_level" -gt 0 ]; then
-        level_str="${history_name_stack[$current_level]}"
-    fi
 
     if [ -n "$filter_query" ]; then
         # tr mit here-string: kein echo-Subshell-Pipe
@@ -108,6 +111,9 @@ get_menu_options() {
     fi
 
     local result=""
+    local -a active_parents=()
+    local k i
+
     # Process substitution: Config-Inhalt direkt streamen — kein all_output-String-Kopie im Speicher
     while IFS= read -r line || [ -n "$line" ]; do
         [ -z "$line" ] && continue
@@ -119,15 +125,30 @@ get_menu_options() {
 
         IFS='|' read -r level name cmd desc <<< "$line"
         [ -z "$name" ] && continue
+        [[ "$level" =~ ^[0-9]+$ ]] || continue
+
+        # Update active_parents tracker for positional submenus
+        for ((k = level; k < 20; k++)); do
+            active_parents[k]=""
+        done
+        if [ "$cmd" = "SUB" ]; then
+            active_parents[level]="$name"
+        fi
 
         # Level filtering
-        if [ "$current_level" -eq 0 ]; then
-            [ "$level" != "0" ] && continue
-        else
-            [ "$level" != "$((current_level))" ] && continue
-            if [ -n "$level_str" ] && [[ ! "$name" =~ ^$level_str\. ]]; then
-                continue
-            fi
+        if [ "$level" -ne "$current_level" ]; then
+            continue
+        fi
+
+        if [ "$current_level" -gt 0 ]; then
+            local parent_match=1
+            for ((i = 0; i < current_level; i++)); do
+                if [ "${active_parents[i]:-}" != "${history_name_stack[$((i + 1))]:-}" ]; then
+                    parent_match=0
+                    break
+                fi
+            done
+            [ "$parent_match" -eq 0 ] && continue
         fi
 
         # Search filtering
@@ -145,18 +166,14 @@ get_menu_options() {
 
         # Append to result buffer (do not echo here to avoid recursion)
         result+="${level}|${name}|${cmd}|${desc}"$'\n'
-    done < <(
-        if [ "${#task_config_files[@]}" -gt 0 ]; then
-            cat "${task_config_files[@]}" 2>/dev/null || true
-        elif [ -f "$config_path" ]; then
-            cat "$config_path"
-        fi
-    )
+    done < <(merge_configs)
 
     # Cache result (store the constructed string, avoid calling get_menu_options again)
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ] && [ -f "$config_path" ]; then
         cached_menu_options="$result"
         last_config_mtime=$(get_file_mtime "$config_path")
+        last_config_level="$current_level"
+        last_config_stack="$current_stack_key"
     fi
 
     # Emit result

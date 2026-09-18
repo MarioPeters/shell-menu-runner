@@ -2,37 +2,53 @@
 # Copy to project root as .tasks
 # Deploy to all services: run --across auth,api,worker,db deploy
 
-# Build All
-0|Build All|run --across auth,api,worker build --parallel|Build all services
+# Build
+0|Build|SUB|Build services
+1|Build All|run --across auth,api,worker build --parallel|Build all services
 1|Build Auth|run auth build|Build auth service
-2|Build API|run api build|Build API service
-3|Build Worker|run worker build|Build worker service
+1|Build API|run api build|Build API service
+1|Build Worker|run worker build|Build worker service
+1|Back|BACK
 
-# Test All
-4|Test All|run --across auth,api,worker test --parallel|Test all services
-5|Test Coverage|run --across auth,api,worker coverage --parallel|Coverage all
+# Testing
+0|Testing|SUB|Test services
+1|Test All|run --across auth,api,worker test --parallel|Test all services
+1|Test Coverage|run --across auth,api,worker coverage --parallel|Coverage all
+1|Back|BACK
 
-# Deploy
-6|Deploy Dev|run --across auth,api,worker deploy:dev depends:0|Deploy to dev
-7|Deploy Stage|run --across auth,api,worker deploy:staging depends:0|Deploy to staging
-8|Deploy Prod|run --across auth,api,worker deploy:prod depends:0,4|Deploy to production
+# Deployment
+0|Deployment|SUB|Deploy services
+1|Deploy Dev|run --across auth,api,worker deploy:dev [depends: Build All]|Deploy to dev
+1|Deploy Stage|run --across auth,api,worker deploy:staging [depends: Build All]|Deploy to staging
+1|Deploy Prod|run --across auth,api,worker deploy:prod [depends: Build All,Test All]|Deploy to production
+1|Back|BACK
 
 # Status & Monitoring
-9|Status All|run --across auth,api,worker status|Status all services
-10|Logs All|run --across auth,api,worker logs|View all logs
-11|Metrics|prometheus query up|Prometheus metrics
+0|Monitoring|SUB|Status & monitoring
+1|Status All|run --across auth,api,worker status|Status all services
+1|Logs All|run --across auth,api,worker logs|View all logs
+1|Metrics|prometheus query up|Prometheus metrics
+1|Back|BACK
 
 # Database
-12|DB Migrate|run db migrate|Run migrations
-13|DB Backup|run db backup|Backup database
-14|DB Seed|run db seed|Seed test data
+0|Database|SUB|Database operations
+1|DB Migrate|run db migrate|Run migrations
+1|DB Backup|run db backup|Backup database
+1|DB Seed|run db seed|Seed test data
+1|Back|BACK
 
 # Rollback
-15|Rollback Dev|run --across auth,api,worker rollback:dev|Rollback dev
-16|Rollback Stage|run --across auth,api,worker rollback:staging|Rollback staging
-17|Rollback Prod|run --across auth,api,worker rollback:prod|Rollback prod
+0|Rollback|SUB|Rollback deployments
+1|Rollback Dev|run --across auth,api,worker rollback:dev|Rollback dev
+1|Rollback Stage|run --across auth,api,worker rollback:staging|Rollback staging
+1|Rollback Prod|run --across auth,api,worker rollback:prod|Rollback prod
+1|Back|BACK
 
 # Maintenance
-18|Health Check|run --across auth,api,worker health|Check all services
-19|Restart Services|run --across auth,api,worker restart|Restart services
-20|Full Restart|run --across auth,api,worker restart && run --across auth,api,worker health depends:19|Full restart + health
+0|Maintenance|SUB|Maintenance & health
+1|Health Check|run --across auth,api,worker health|Check all services
+1|Restart Services|run --across auth,api,worker restart|Restart services
+1|Full Restart|run --across auth,api,worker restart && run --across auth,api,worker health [depends: Restart Services]|Full restart + health
+1|Back|BACK
+
+0|Exit|EXIT|Close menu

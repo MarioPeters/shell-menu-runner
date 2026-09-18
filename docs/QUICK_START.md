@@ -282,9 +282,10 @@ run && press 1  # Runs first task
 
 ```bash
 # LEVEL > 0 creates sub-menus
-1|Database|SUB|Database operations
-2|Migrate|./migrate.sh|Run migrations
-2|Seed|./seed.sh|Seed test data
+0|Database|SUB|Database operations
+1|Migrate|./migrate.sh|Run migrations
+1|Seed|./seed.sh|Seed test data
+1|Back|BACK
 ```
 
 ✅ **Add confirmation for dangerous tasks**

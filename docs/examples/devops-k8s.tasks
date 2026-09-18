@@ -3,49 +3,63 @@
 
 # Local Development
 0|Dev Setup|docker-compose up -d|Start local environment
-1|Dev Logs|docker-compose logs -f|View logs
-2|Dev Stop|docker-compose down|Stop local environment
-3|Dev Fresh|docker-compose down -v && docker-compose up -d|Fresh local environment
+0|Dev Logs|docker-compose logs -f|View logs
+0|Dev Stop|docker-compose down|Stop local environment
+0|Dev Fresh|docker-compose down -v && docker-compose up -d|Fresh local environment
 
 # Build & Push
-4|Build Image|docker build -t app:latest .|Build Docker image
-5|Tag Image|docker tag app:latest registry.example.com/app:v1.0|Tag image
-6|Push Image|docker push registry.example.com/app:v1.0|Push to registry
+0|Docker|SUB|Docker build & push
+1|Build Image|docker build -t app:latest .|Build Docker image
+1|Tag Image|docker tag app:latest registry.example.com/app:v1.0|Tag image
+1|Push Image|docker push registry.example.com/app:v1.0|Push to registry
+1|Back|BACK
 
-# Kubernetes - Dev
-7|K8s Dev Apply|kubectl apply -f k8s/dev/|Apply dev manifests
-8|K8s Dev Status|kubectl get pods -n dev|Check dev status
-9|K8s Dev Logs|kubectl logs -f deployment/app -n dev|Dev logs
-10|K8s Dev Delete|kubectl delete -f k8s/dev/|Delete dev deployment
-
-# Kubernetes - Staging
-11|K8s Stage Apply|kubectl apply -f k8s/staging/|Apply staging manifests
-12|K8s Stage Status|kubectl get pods -n staging|Check staging status
-13|K8s Stage Rollout|kubectl rollout status deployment/app -n staging|Staging rollout
-14|K8s Stage Restart|kubectl rollout restart deployment/app -n staging|Restart staging
-
-# Kubernetes - Production
-15|K8s Prod Apply|kubectl apply -f k8s/prod/|Apply prod manifests
-16|K8s Prod Status|kubectl get pods -n prod|Check prod status
-17|K8s Prod Rollback|kubectl rollout undo deployment/app -n prod|Rollback prod
-18|K8s Prod Restart|kubectl rollout restart deployment/app -n prod|Restart prod
+# Kubernetes
+0|Kubernetes|SUB|Kubernetes environments
+1|K8s Dev|SUB|Dev environment
+2|K8s Dev Apply|kubectl apply -f k8s/dev/|Apply dev manifests
+2|K8s Dev Status|kubectl get pods -n dev|Check dev status
+2|K8s Dev Logs|kubectl logs -f deployment/app -n dev|Dev logs
+2|K8s Dev Delete|kubectl delete -f k8s/dev/|Delete dev deployment
+2|Back|BACK
+1|K8s Staging|SUB|Staging environment
+2|K8s Stage Apply|kubectl apply -f k8s/staging/|Apply staging manifests
+2|K8s Stage Status|kubectl get pods -n staging|Check staging status
+2|K8s Stage Rollout|kubectl rollout status deployment/app -n staging|Staging rollout
+2|K8s Stage Restart|kubectl rollout restart deployment/app -n staging|Restart staging
+2|Back|BACK
+1|K8s Production|SUB|Production environment
+2|K8s Prod Apply|kubectl apply -f k8s/prod/|Apply prod manifests
+2|K8s Prod Status|kubectl get pods -n prod|Check prod status
+2|K8s Prod Rollback|kubectl rollout undo deployment/app -n prod|Rollback prod
+2|K8s Prod Restart|kubectl rollout restart deployment/app -n prod|Restart prod
+2|Back|BACK
+1|Back|BACK
 
 # Monitoring
-19|Prometheus|port-forward svc/prometheus 9090:9090 -n monitoring|Access Prometheus
-20|Grafana|port-forward svc/grafana 3000:3000 -n monitoring|Access Grafana
-21|Logs Stack|kubectl logs -f deployment/logging -n monitoring|View logging stack
+0|Monitoring|SUB|Monitoring and logs
+1|Prometheus|port-forward svc/prometheus 9090:9090 -n monitoring|Access Prometheus
+1|Grafana|port-forward svc/grafana 3000:3000 -n monitoring|Access Grafana
+1|Logs Stack|kubectl logs -f deployment/logging -n monitoring|View logging stack
+1|Back|BACK
 
 # Cluster
-22|Cluster Info|kubectl cluster-info|Cluster information
-23|Nodes|kubectl get nodes|List nodes
-24|Namespaces|kubectl get namespaces|List namespaces
-25|Resources|kubectl top nodes|Resource usage
+0|Cluster|SUB|Cluster management
+1|Cluster Info|kubectl cluster-info|Cluster information
+1|Nodes|kubectl get nodes|List nodes
+1|Namespaces|kubectl get namespaces|List namespaces
+1|Resources|kubectl top nodes|Resource usage
+1|Back|BACK
 
 # Maintenance
-26|DB Backup|mysqldump -u root -p prod_db > backup_$(date +%Y%m%d).sql|Backup database
-27|Cert Renew|kubectl apply -f k8s/certs/|Renew certificates
-28|Security Scan|kubectl audit|Security audit
-29|Cleanup|kubectl delete pod --field-selector status.phase=Failed|Cleanup failed pods
+0|Maintenance|SUB|Maintenance & cleanup
+1|DB Backup|mysqldump -u root -p prod_db > backup_$(date +%Y%m%d).sql|Backup database
+1|Cert Renew|kubectl apply -f k8s/certs/|Renew certificates
+1|Security Scan|kubectl audit|Security audit
+1|Cleanup|kubectl delete pod --field-selector status.phase=Failed|Cleanup failed pods
+1|Back|BACK
 
 # Full Deployment
-30|Deploy All|run build && run --across dev,staging,prod deploy depends:4|Full deployment pipeline
+0|Deploy All|run build && run --across dev,staging,prod deploy [depends: Build Image]|Full deployment pipeline
+
+0|Exit|EXIT|Close menu

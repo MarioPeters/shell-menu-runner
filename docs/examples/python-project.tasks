@@ -3,35 +3,47 @@
 
 # Setup
 0|Install|pip install -r requirements.txt|Install dependencies
-1|Venv|python3 -m venv venv && source venv/bin/activate|Create virtual environment
-2|Update|pip install --upgrade pip && pip install -r requirements.txt|Update dependencies
+0|Venv|python3 -m venv venv && source venv/bin/activate|Create virtual environment
+0|Update|pip install --upgrade pip && pip install -r requirements.txt|Update dependencies
 
 # Development
-3|Run|python main.py|Run application
-4|Dev Server|python manage.py runserver|Run Django development server
-5|Shell|python -i main.py|Interactive Python shell
+0|Run|python main.py|Run application
+0|Dev Server|python manage.py runserver|Run Django development server
+0|Shell|python -i main.py|Interactive Python shell
 
 # Quality
-6|Lint|pylint src/|Lint code (pylint)
-7|Format|black src/|Format code (black)
-8|Type Check|mypy src/|Type checking (mypy)
-9|QA|pylint src/ && black src/ && mypy src/ depends:6,7,8|Full quality check
+0|Quality|SUB|Code quality tools
+1|Lint|pylint src/|Lint code (pylint)
+1|Format|black src/|Format code (black)
+1|Type Check|mypy src/|Type checking (mypy)
+1|QA|pylint src/ && black src/ && mypy src/ [depends: Lint,Format,Type Check]|Full quality check
+1|Back|BACK
 
 # Testing
-10|Test Unit|pytest tests/|Unit tests
-11|Test Cov|pytest --cov=src tests/|Coverage report
-12|Test All|pytest tests/ --cov=src|Full test suite
+0|Testing|SUB|Test suite
+1|Test Unit|pytest tests/|Unit tests
+1|Test Cov|pytest --cov=src tests/|Coverage report
+1|Test All|pytest tests/ --cov=src|Full test suite
+1|Back|BACK
 
 # Database
-13|DB Migrate|python manage.py migrate|Run migrations
-14|DB Shell|python manage.py dbshell|Database shell
-15|DB Reset|python manage.py migrate zero && python manage.py migrate|Reset database
+0|Database|SUB|Database operations
+1|DB Migrate|python manage.py migrate|Run migrations
+1|DB Shell|python manage.py dbshell|Database shell
+1|DB Reset|python manage.py migrate zero && python manage.py migrate|Reset database
+1|Back|BACK
 
 # Documentation
-16|Docs Build|sphinx-build -b html docs/ docs/_build/|Build docs
-17|Docs Serve|python -m http.server -d docs/_build/ 8000|Serve docs
+0|Docs|SUB|Documentation
+1|Docs Build|sphinx-build -b html docs/ docs/_build/|Build docs
+1|Docs Serve|python -m http.server -d docs/_build/ 8000|Serve docs
+1|Back|BACK
 
 # Deployment
-18|Build|python setup.py sdist bdist_wheel|Build distribution
-19|Upload|twine upload dist/*|Upload to PyPI
-20|Deploy|docker build -t app:latest . && docker push app:latest|Deploy container
+0|Deployment|SUB|Deployment tasks
+1|Build|python setup.py sdist bdist_wheel|Build distribution
+1|Upload|twine upload dist/*|Upload to PyPI
+1|Deploy|docker build -t app:latest . && docker push app:latest|Deploy container
+1|Back|BACK
+
+0|Exit|EXIT|Close menu

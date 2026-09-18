@@ -90,6 +90,13 @@ process_progress_output() {
     return 0  # 0 statt 1: stabiler bei set -e, semantisch korrekt (kein Fehler)
 }
 
+_execute_pipeline_callback() {
+    local step_name="$1"
+    local step_cmd="$2"
+    local step_desc="$3"
+    execute_task "$step_cmd" "$step_name" "$step_desc" || return 1
+}
+
 execute_task_pipeline() {
     local task_cmd="$1"
     local steps_str="${task_cmd#tasks:}"
@@ -101,7 +108,7 @@ execute_task_pipeline() {
         step=$(trim_whitespace "$step")
         [ -z "$step" ] && continue
         echo -e "  ${COLOR_DIM}→ $step${COLOR_RESET}"
-        if ! find_task_in_menu "$step" 'execute_task'; then
+        if ! find_task_in_menu "$step" '_execute_pipeline_callback'; then
             echo -e "${COLOR_ERR}❌ Task '$step' not found in:${COLOR_RESET}"
             for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
             return 1
@@ -389,6 +396,9 @@ _cli_matches=()   # populated by cli_match_tasks(); array of matching indices
 cli_match_tasks() {
     local query="$1"
     _cli_matches=()
+    if [ ${#menu_options[@]} -eq 0 ]; then
+        IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    fi
     local total=${#menu_options[@]}
 
     # Numeric query: direct 1-based index lookup
@@ -429,6 +439,9 @@ cli_match_tasks() {
 
 cli_run_task() {
     local query="$1"
+    if [ ${#menu_options[@]} -eq 0 ]; then
+        IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    fi
     local total=${#menu_options[@]}
 
     if [ "$total" -eq 0 ]; then
@@ -487,6 +500,9 @@ cli_run_task() {
 }
 
 cli_list_tasks() {
+    if [ ${#menu_options[@]} -eq 0 ]; then
+        IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    fi
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
         echo "No tasks found."
