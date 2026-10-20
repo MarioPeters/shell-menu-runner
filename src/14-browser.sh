@@ -61,34 +61,43 @@ file_browser() {
                 echo -e "${COLOR_INFO}Choose creation method:${COLOR_RESET}"
                 echo "1) Open in editor"
                 echo "2) Paste content"
-                method=$(read_key) || continue
-                
+                method=$(read_key) || break
+
                 case "$method" in
                     "1")
-                        ${EDITOR:-nano} "$filepath"
-                        stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                        run_external_editor "$filepath"
                         ;;
                     "2")
                         echo -e "${COLOR_INFO}Paste content (Ctrl+D to save):${COLOR_RESET}"
-                        cat > "$filepath"
-                        echo -e "${COLOR_SEL}✔ File created: $filename${COLOR_RESET}"
+                        # Without a terminal `cat` would swallow the remaining
+                        # input instead of ending at EOF.
+                        if [ -t 0 ]; then
+                            cat > "$filepath"
+                            echo -e "${COLOR_SEL}✔ File created: $filename${COLOR_RESET}"
+                        else
+                            echo -e "${COLOR_ERR}Paste mode needs an interactive terminal${COLOR_RESET}"
+                        fi
                         sleep 1
                         ;;
                 esac
                 ;;
             "2")
-                [ -f ".tasks" ] && ${EDITOR:-nano} ".tasks" || echo -e "${COLOR_ERR}.tasks not found${COLOR_RESET}"
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                if [ -f ".tasks" ]; then
+                    run_external_editor ".tasks"
+                else
+                    echo -e "${COLOR_ERR}.tasks not found${COLOR_RESET}"
+                fi
                 ;;
             "3")
                 if [ -f ".env" ]; then
-                    ${EDITOR:-nano} ".env"                    stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin                else
+                    run_external_editor ".env"
+                else
                     echo -e "\n${COLOR_INFO}Create .env? [y/N]${COLOR_RESET} "
                     read -n 1 -r REPLY
                     echo ""
                     if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                         touch ".env"
-                        ${EDITOR:-nano} ".env"
+                        run_external_editor ".env"
                     fi
                 fi
                 ;;
@@ -111,8 +120,7 @@ file_browser() {
                     if [[ "$fkey" =~ [1-9] ]]; then
                         local fsel=$((fkey - 1))
                         if [ "$fsel" -lt "${#all_files[@]}" ]; then
-                            ${EDITOR:-nano} "${all_files[$fsel]}"
-                            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                            run_external_editor "${all_files[$fsel]}"
                         fi
                     fi
                 fi

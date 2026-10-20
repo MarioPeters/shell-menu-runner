@@ -205,7 +205,8 @@ get_all_tasks() {
         [[ "$line" =~ ^THEME: ]] && continue
         [[ "$line" =~ ^TITLE: ]] && continue
 
-        IFS='|' read -r level name cmd desc <<< "$line"
+        split_task_line "$line"
+        level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
         [ -z "$name" ] && continue
         if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
             continue

@@ -709,6 +709,7 @@ _run_cli_match() {
     bash -c "
         set +e
         source '$ROOT_DIR/src/01-config.sh' 2>/dev/null
+        source '$ROOT_DIR/src/02-utils.sh' 2>/dev/null
         menu_options=('0|Build Project|make build|Build' '0|Run Tests|make test|Tests' '0|Build Docker|docker build .|Docker')
         source '$ROOT_DIR/src/12-execution.sh' 2>/dev/null
         cli_match_tasks '$1' 2>/dev/null

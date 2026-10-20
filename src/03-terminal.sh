@@ -4,6 +4,7 @@
 
 # Context indicator — built once at init, read by draw_menu()
 _CTX_LINE=""
+_CTX_LINE_PLAIN=""
 _CTX_BRANCH=""
 _CTX_HOST=""
 _CTX_ENV=""
@@ -15,10 +16,48 @@ _BORDER_TOP=""
 # shellcheck disable=SC2034
 _BORDER_BOT=""
 
+# Terminal capabilities — defaults for the non-interactive path (SSH without
+# -t, pipes, cron).  init_terminal_capabilities() overwrites them when a real
+# terminal is available; without these defaults the script would abort with
+# "unbound variable" as soon as set -u is active.
+HAS_TPUT=0
+TPUT_CUP=""
+TPUT_CIVIS=""
+TPUT_CNORM=""
+TPUT_ED=""
+TPUT_COLS=80
+
+# ==============================================================================
+#  TERMINAL STATE SNAPSHOT
+# ==============================================================================
+# The current terminal settings (stty -g) are captured once before the menu
+# switches to raw mode and restored after external programs (editors) have run.
+# `stty sane` would override the user's own settings and the combination
+# `stty sane; stty -echo; drain_stdin` left the shell in `-icanon` mode
+# without echo — every following `read` was blind and without line editing.
+_SAVED_STTY=""
+
+save_terminal_state() {
+    [ -n "$_SAVED_STTY" ] && return 0
+    _SAVED_STTY=$(stty -g 2>/dev/null || true)
+    return 0
+}
+
+restore_terminal_state() {
+    if [ -n "$_SAVED_STTY" ]; then
+        stty "$_SAVED_STTY" 2>/dev/null || true
+    else
+        stty sane 2>/dev/null || true
+    fi
+    return 0
+}
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
         is_interactive=1
+        # Snapshot the user's terminal settings before anything changes them
+        save_terminal_state
         init_terminal_capabilities
     else
         is_interactive=0
@@ -35,14 +74,16 @@ check_ssh_session() {
 }
 
 init_context() {
-    _CTX_LINE=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
+    _CTX_LINE=""; _CTX_LINE_PLAIN=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
     local show="${CONTEXT_SHOW:-git,hostname,env}"
     local parts=()
+    local plain_parts=()
 
     # Git branch — subprocess is acceptable at init (not in render loop)
     if [[ "$show" == *"git"* ]]; then
         _CTX_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
         [ -n "$_CTX_BRANCH" ] && parts+=("${COLOR_INFO}⎇ ${_CTX_BRANCH}${COLOR_RESET}")
+        [ -n "$_CTX_BRANCH" ] && plain_parts+=("⎇ ${_CTX_BRANCH}")
     fi
 
     # Hostname — only on SSH sessions
@@ -50,6 +91,7 @@ init_context() {
         if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
             _CTX_HOST="${HOSTNAME:-$(hostname 2>/dev/null || true)}"
             [ -n "$_CTX_HOST" ] && parts+=("${COLOR_ERR}⚡ ${_CTX_HOST}${COLOR_RESET}")
+            [ -n "$_CTX_HOST" ] && plain_parts+=("⚡ ${_CTX_HOST}")
         fi
     fi
 
@@ -67,17 +109,21 @@ init_context() {
                 *)               env_color="$COLOR_DIM"  ;;
             esac
             parts+=("${env_color}${env_upper}${COLOR_RESET}")
+            plain_parts+=("${env_upper}")
         fi
     fi
 
     # Join parts with " · " separator — pure Bash, no subshell
     if [ "${#parts[@]}" -gt 0 ]; then
         local line="${parts[0]}"
+        local plain="${plain_parts[0]}"
         local i
         for (( i=1; i<${#parts[@]}; i++ )); do
             line+="${COLOR_DIM} · ${COLOR_RESET}${parts[$i]}"
+            plain+=" · ${plain_parts[$i]}"
         done
         _CTX_LINE="$line"
+        _CTX_LINE_PLAIN="$plain"
     fi
 }
 
@@ -93,6 +139,251 @@ build_border_strings() {
     _BORDER_TOP="┌${dashes}┐"
     _BORDER_BOT="└${dashes}┘"
     _LAST_COL_WIDTH="$col_width"
+}
+
+# ==============================================================================
+#  UTF-8 DISPLAY WIDTH
+# ==============================================================================
+# Terminals count columns, not bytes or characters: CJK glyphs and emoji occupy
+# two columns, combining marks none.  The helpers below decode UTF-8 byte-wise
+# (locale independent, Bash 3.2 compatible) and return the real column count.
+# Without this the menu boxes wrap or misalign as soon as a task name contains
+# non-ASCII text.
+
+# Decoder state — shared via globals (Bash 3.2 has no namerefs).
+_U8_STR=""
+_U8_POS=0
+_U8_CP=0
+_U8_LEN=0
+_U8_WIDTH=0
+
+# Result variables of the public helpers
+DISPLAY_WIDTH=0
+FIT_TEXT=""
+
+# Sets _U8_WIDTH to the number of terminal columns used by a code point.
+_u8_width() {
+    local _cp="$1"
+    _U8_WIDTH=1
+
+    # ── Zero width: control characters and combining marks ─────────
+    if [ "$_cp" -lt 32 ] \
+       || { [ "$_cp" -ge 127 ] && [ "$_cp" -lt 160 ]; } \
+       || { [ "$_cp" -ge 768 ] && [ "$_cp" -le 879 ]; } \
+       || { [ "$_cp" -ge 1425 ] && [ "$_cp" -le 1479 ]; } \
+       || { [ "$_cp" -ge 1536 ] && [ "$_cp" -le 1791 ]; } \
+       || { [ "$_cp" -ge 1872 ] && [ "$_cp" -le 1919 ]; } \
+       || { [ "$_cp" -ge 8202 ] && [ "$_cp" -le 8207 ]; } \
+       || { [ "$_cp" -ge 8208 ] && [ "$_cp" -le 8231 ]; } \
+       || { [ "$_cp" -ge 8240 ] && [ "$_cp" -le 8247 ]; } \
+       || { [ "$_cp" -ge 8288 ] && [ "$_cp" -le 8299 ]; } \
+       || { [ "$_cp" -ge 8400 ] && [ "$_cp" -le 8432 ]; } \
+       || { [ "$_cp" -ge 8450 ] && [ "$_cp" -le 8531 ]; } \
+       || { [ "$_cp" -ge 65024 ] && [ "$_cp" -le 65039 ]; } \
+       || [ "$_cp" -eq 65279 ]; then
+        _U8_WIDTH=0
+        return 0
+    fi
+
+    # ── Wide: CJK, fullwidth forms and emoji ──────────────────────
+    if { [ "$_cp" -ge 4352 ] && [ "$_cp" -le 4447 ]; } \
+       || { [ "$_cp" -ge 11904 ] && [ "$_cp" -le 12350 ]; } \
+       || { [ "$_cp" -ge 12352 ] && [ "$_cp" -le 13311 ]; } \
+       || { [ "$_cp" -ge 13312 ] && [ "$_cp" -le 19903 ]; } \
+       || { [ "$_cp" -ge 19968 ] && [ "$_cp" -le 40959 ]; } \
+       || { [ "$_cp" -ge 40960 ] && [ "$_cp" -le 42191 ]; } \
+       || { [ "$_cp" -ge 43360 ] && [ "$_cp" -le 43455 ]; } \
+       || { [ "$_cp" -ge 44032 ] && [ "$_cp" -le 55203 ]; } \
+       || { [ "$_cp" -ge 63744 ] && [ "$_cp" -le 64255 ]; } \
+       || { [ "$_cp" -ge 65008 ] && [ "$_cp" -le 65023 ]; } \
+       || { [ "$_cp" -ge 65040 ] && [ "$_cp" -le 65135 ]; } \
+       || { [ "$_cp" -ge 65280 ] && [ "$_cp" -le 65376 ]; } \
+       || { [ "$_cp" -ge 65504 ] && [ "$_cp" -le 65510 ]; } \
+       || { [ "$_cp" -ge 127744 ] && [ "$_cp" -le 128591 ]; } \
+       || { [ "$_cp" -ge 128640 ] && [ "$_cp" -le 128711 ]; } \
+       || { [ "$_cp" -ge 128768 ] && [ "$_cp" -le 130303 ]; } \
+       || { [ "$_cp" -ge 128992 ] && [ "$_cp" -le 129003 ]; } \
+       || { [ "$_cp" -ge 131072 ] && [ "$_cp" -le 262143 ]; }; then
+        _U8_WIDTH=2
+        return 0
+    fi
+
+    return 0
+}
+
+# Decodes the UTF-8 sequence at byte position _U8_POS of _U8_STR.
+# Result: _U8_CP (code point), _U8_LEN (bytes), _U8_WIDTH (columns).
+_u8_decode() {
+    local _b1 _b2 _b3 _b4 _v _rest
+
+    printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+    _b1=$_v
+    [ "$_b1" -lt 0 ] && _b1=$(( _b1 + 256 ))
+
+    if [ "$_b1" -lt 128 ]; then
+        _U8_CP=$_b1
+        _U8_LEN=1
+    elif [ "$_b1" -lt 224 ]; then
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 2 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_CP=$(( ((_b1 & 31) << 6) | (_b2 & 63) ))
+        _U8_LEN=2
+    elif [ "$_b1" -lt 240 ]; then
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 3 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b3=$_v; [ "$_b3" -lt 0 ] && _b3=$(( _b3 + 256 ))
+        _U8_CP=$(( ((_b1 & 15) << 12) | ((_b2 & 63) << 6) | (_b3 & 63) ))
+        _U8_LEN=3
+    else
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 4 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b3=$_v; [ "$_b3" -lt 0 ] && _b3=$(( _b3 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b4=$_v; [ "$_b4" -lt 0 ] && _b4=$(( _b4 + 256 ))
+        _U8_CP=$(( ((_b1 & 7) << 18) | ((_b2 & 63) << 12) | ((_b3 & 63) << 6) | (_b4 & 63) ))
+        _U8_LEN=4
+    fi
+
+    _u8_width "$_U8_CP"
+    return 0
+}
+
+# Sets DISPLAY_WIDTH to the number of terminal columns of the given string.
+display_width() {
+    local _s="$1"
+    local _w=0 _i=0 _len _lc_saved="" _lc_was_set=0
+
+    # Fast path: pure ASCII → one column per character
+    case "$_s" in
+        *[![:ascii:]]*) ;;
+        *) DISPLAY_WIDTH=${#_s}; return 0 ;;
+    esac
+
+    # Byte-wise decoding: LC_ALL=C makes ${#str} and ${str:i:n} byte based
+    [ -n "${LC_ALL+x}" ] && { _lc_was_set=1; _lc_saved="$LC_ALL"; }
+    LC_ALL=C
+
+    _U8_STR="$_s"
+    _len=${#_U8_STR}
+    while [ "$_i" -lt "$_len" ]; do
+        _U8_POS=$_i
+        _u8_decode
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+
+    DISPLAY_WIDTH=$_w
+    return 0
+}
+
+# Pads or truncates a string to exactly the given number of terminal columns.
+# Result: FIT_TEXT.  Truncation never splits a UTF-8 character and appends
+# an ellipsis so the column width stays stable.
+fit_to_width() {
+    local _s="$1" _max="$2"
+    local _w=0 _i=0 _len _out="" _truncated=0 _limit _pad _spaces="" _lc_saved="" _lc_was_set=0
+
+    FIT_TEXT=""
+    [ "$_max" -lt 1 ] && return 0
+
+    # Fast path: pure ASCII
+    case "$_s" in
+        *[![:ascii:]]*) ;;
+        *)
+            if [ "${#_s}" -le "$_max" ]; then
+                printf -v _spaces '%*s' "$(( _max - ${#_s} ))" ''
+                FIT_TEXT="${_s}${_spaces}"
+            else
+                printf -v FIT_TEXT '%s...' "${_s:0:$(( _max > 3 ? _max - 3 : 1 ))}"
+            fi
+            return 0
+            ;;
+    esac
+
+    # Byte-wise decoding: LC_ALL=C makes ${#str} and ${str:i:n} byte based
+    [ -n "${LC_ALL+x}" ] && { _lc_was_set=1; _lc_saved="$LC_ALL"; }
+    LC_ALL=C
+
+    _U8_STR="$_s"
+    _len=${#_U8_STR}
+
+    # First pass: does the text fit?
+    while [ "$_i" -lt "$_len" ]; do
+        _U8_POS=$_i
+        _u8_decode
+        if [ $(( _w + _U8_WIDTH )) -gt "$_max" ]; then
+            _truncated=1
+            break
+        fi
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    if [ "$_truncated" -eq 0 ]; then
+        _pad=$(( _max - _w ))
+        [ "$_pad" -gt 0 ] && printf -v _spaces '%*s' "$_pad" ''
+        if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+        FIT_TEXT="${_s}${_spaces}"
+        return 0
+    fi
+
+    # Second pass: cut at the column limit, reserve 3 columns for the ellipsis
+    _limit=$(( _max - 3 ))
+    [ "$_limit" -lt 1 ] && _limit=1
+    _w=0
+    _i=0
+    _out=""
+    while [ "$_i" -lt "$_len" ]; do
+        local _start=$_i
+        _U8_POS=$_i
+        _u8_decode
+        if [ $(( _w + _U8_WIDTH )) -gt "$_limit" ]; then
+            break
+        fi
+        # _U8_POS was advanced by the decoder — cut at the original offset
+        _out="${_out}${_U8_STR:_start:_U8_LEN}"
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    _out="${_out}..."
+    _w=$(( _w + 3 ))
+    _pad=$(( _max - _w ))
+    [ "$_pad" -gt 0 ] && printf -v _spaces '%*s' "$_pad" ''
+    if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+    FIT_TEXT="${_out}${_spaces}"
+    return 0
+}
+
+# Horizontal rule that always fits into the current terminal width.
+# Usage: separator_line [max_width]
+separator_line() {
+    local _max="${1:-63}"
+    local _width="${TPUT_COLS:-80}"
+    local _len _i _out=""
+
+    [ "$_width" -gt "$_max" ] && _width=$_max
+    [ "$_width" -lt 10 ] && _width=10
+
+    # ── characters ────────────────────────────────────────────────
+    for (( _i=0; _i<_width; _i++ )); do _out+='─'; done
+    printf "%s" "$_out"
 }
 
 # Optimized terminal capability caching
@@ -123,13 +414,15 @@ init_terminal_capabilities() {
 consume_keypress() {
     # Suppress echo so arrow keys / escape sequences are not printed to the
     # terminal while waiting for the keypress (e.g. after stty sane in execute_task).
-    stty -echo 2>/dev/null
-    read_key >/dev/null
+    # Every stty call tolerates a missing TTY — otherwise `set -e` would abort
+    # the script in a pipe/SSH-without-TTY session.
+    stty -echo 2>/dev/null || true
+    read_key >/dev/null || true
     # Drain any remaining bytes from multi-byte escape sequences (e.g. arrow keys
     # send \x1b[A; read_key already consumed the full sequence, but defensive
     # drain prevents leftover bytes leaking into the main loop's key handler).
     drain_stdin
-    stty echo 2>/dev/null
+    stty echo 2>/dev/null || true
 }
 
 # Enable raw interactive input mode for the main loop.
@@ -138,22 +431,60 @@ consume_keypress() {
 # to "". Spurious "" from a failed read_key_raw is blocked by the _rk_status
 # guard in the main loop (13-ui.sh), not by changing icrnl.
 set_raw_mode() {
-    stty -echo -icanon time 0 min 1 isig 2>/dev/null
+    stty -echo -icanon time 0 min 1 isig 2>/dev/null || true
 }
 
 drain_stdin() {
+    # Only a terminal can have buffered bytes — on a pipe dd would block until
+    # the writer closes the pipe (hang).
+    [ -t 0 ] || return 0
     # Non-blocking drain of any pending stdin bytes (e.g. escape sequence tails
     # or task output left in the buffer). Explicitly disables icanon so this
     # works regardless of the current terminal mode (e.g. after stty sane).
     # Uses bs=128 to empty buffers with fewer fork iterations.
     # Restores blocking raw mode (min 1) afterwards.
-    stty -icanon min 0 time 0 2>/dev/null
+    stty -icanon min 0 time 0 2>/dev/null || true
     local _d
     while true; do
         _d=$(dd bs=128 count=1 2>/dev/null)
         [ -z "$_d" ] && break
     done
-    stty min 1 time 0 2>/dev/null
+    stty min 1 time 0 2>/dev/null || true
+}
+
+# Re-installs the Ctrl+C handler that fits the current context: the menu loop
+# needs the terminal restore, every other code path does not.
+restore_int_trap() {
+    if [ "${_MENU_LOOP_ACTIVE:-0}" -eq 1 ]; then
+        trap 'restore_term; cleanup_wrapper; exit 130' INT TERM
+    else
+        trap 'cleanup_wrapper; exit 130' INT TERM
+    fi
+    return 0
+}
+
+# Runs an external editor on the given file and restores the terminal state.
+#
+# * `trap ':' INT` (handler, not ignore): bash resets a *trapped* signal to its
+#   default disposition in the child process, so Ctrl+C terminates the editor
+#   while the menu survives.  `trap '' INT` would be inherited by the child and
+#   the editor could never be stopped.
+# * The terminal settings are restored from the snapshot instead of
+#   `stty sane; stty -echo` — that left the shell in `-icanon` mode without
+#   echo, so the following `read` calls were blind.
+run_external_editor() {
+    local file="${1:-}"
+    if [ -z "$file" ]; then
+        error "No file to edit"
+        return 0
+    fi
+
+    trap ':' INT
+    ${EDITOR:-nano} "$file" || true
+    restore_int_trap
+    drain_stdin
+    restore_terminal_state
+    return 0
 }
 
 read_key() {
@@ -168,11 +499,13 @@ read_key() {
         # Use ONE dd call (bs=10) instead of a loop of bs=1 forks: fewer subshells,
         # no race between fork overhead and byte delivery.
         local previous_stty
-        previous_stty=$(stty -g)
-        stty -icanon min 0 time 1 2>/dev/null
+        previous_stty=$(stty -g 2>/dev/null || true)
+        stty -icanon min 0 time 1 2>/dev/null || true
         local seq
         seq=$(dd bs=10 count=1 2>/dev/null)
-        stty "$previous_stty" 2>/dev/null
+        if [ -n "$previous_stty" ]; then
+            stty "$previous_stty" 2>/dev/null || true
+        fi
         key="${key}${seq}"
     fi
     printf "%s" "$key"
@@ -193,10 +526,10 @@ read_key_raw() {
         # waits at most 100ms if nothing arrives (pure ESC press).
         # One fork instead of 5 serial forks avoids the race condition where
         # fork overhead (~5-20ms) caused [A to be missed at time 0.
-        stty min 0 time 1 2>/dev/null
+        stty min 0 time 1 2>/dev/null || true
         local seq
         seq=$(dd bs=10 count=1 2>/dev/null)
-        stty min 1 time 0 2>/dev/null
+        stty min 1 time 0 2>/dev/null || true
         key="${key}${seq}"
     fi
     printf "%s" "$key"

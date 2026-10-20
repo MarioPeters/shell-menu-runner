@@ -239,33 +239,37 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [options] [profile]"
-            echo ""
-            echo "CLI Mode (no menu):"
-            echo "  run --list              List all tasks for current profile"
-            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
-            echo "  run --dry-run --run <n> Preview command without executing"
-            echo "  run git --run build     Profile + task combined"
-            echo ""
-            echo "Profiles:"
-            echo "  run <name>              Load profile .tasks.<name>"
-            echo "  run --list-profiles     List all available profiles"
-            echo "  run --list-profiles=json  List profiles in JSON format"
-            echo "  run --init-profile <name>  Create new profile"
-            echo "  run --validate <name>   Validate profile syntax"
-            echo ""
-            echo "Multi-Profile Execution:"
-            echo "  run --across p1,p2,p3 task  Execute task across multiple profiles"
-            echo ""
-            echo "Analysis & Recommendations:"
-            echo "  run --analyze [profile]  Show analysis & improvement suggestions"
-            echo ""
-            echo "Other:"
-            echo "  run --init              Initialize .tasks in current dir"
-            echo "  run --global            Switch to global mode"
-            echo "  run --edit, -e          Edit config file"
-            echo "  run --update            Update script to latest version"
-            echo "  run --debug             Enable debug mode"
+            # 2>/dev/null: a closed stdout (`run --help | head`) must not
+            # produce a "write error: Broken pipe" message from the builtin.
+            {
+                echo "Usage: run [options] [profile]"
+                echo ""
+                echo "CLI Mode (no menu):"
+                echo "  run --list              List all tasks for current profile"
+                echo "  run --run <name|num>    Execute task by name (substring) or number"
+                echo "  run --dry-run --run <n> Preview command without executing"
+                echo "  run git --run build     Profile + task combined"
+                echo ""
+                echo "Profiles:"
+                echo "  run <name>              Load profile .tasks.<name>"
+                echo "  run --list-profiles     List all available profiles"
+                echo "  run --list-profiles=json  List profiles in JSON format"
+                echo "  run --init-profile <name>  Create new profile"
+                echo "  run --validate <name>   Validate profile syntax"
+                echo ""
+                echo "Multi-Profile Execution:"
+                echo "  run --across p1,p2,p3 task  Execute task across multiple profiles"
+                echo ""
+                echo "Analysis & Recommendations:"
+                echo "  run --analyze [profile]  Show analysis & improvement suggestions"
+                echo ""
+                echo "Other:"
+                echo "  run --init              Initialize .tasks in current dir"
+                echo "  run --global            Switch to global mode"
+                echo "  run --edit, -e          Edit config file"
+                echo "  run --update            Update script to latest version"
+                echo "  run --debug             Enable debug mode"
+            } 2>/dev/null || true
             exit 0
             ;;
         --version|-v)
@@ -333,6 +337,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --edit|-e)
             [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"
+            # Terminal-Snapshot, damit der Editor-Zustand danach wiederhergestellt
+            # werden kann (läuft vor check_interactive)
+            save_terminal_state
             edit_config_menu "$config_path"
             exit 0
             ;;
@@ -433,6 +440,12 @@ if [ "$is_interactive" -eq 0 ] && [ "$is_ssh_session" -eq 1 ] && [ "$ssh_hint_sh
     echo "Proceeding in non-interactive mode. Type task number to execute:"
     echo ""
     ssh_hint_shown=1
+fi
+
+# Without a TTY there is nobody to answer the interactive prompts (preview,
+# "press any key") — the tasks run in CLI mode instead.
+if [ "$is_interactive" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
+    cli_mode=1
 fi
 
 # CLI mode dispatch

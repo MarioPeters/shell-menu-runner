@@ -1,5 +1,7 @@
 #!/usr/bin/env zsh
-# shellcheck shell=bash
+# Zsh widget: open the Shell Menu Runner menu with Ctrl+O.
+# Source this file from ~/.zshrc — it is not meant to be executed.
+# (Syntax is checked with `zsh -n`, ShellCheck cannot parse zsh code.)
 
 function _open_runner_widget() {
     local PREV_BUFFER="$BUFFER"; local PREV_CURSOR="$CURSOR"

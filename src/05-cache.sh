@@ -5,6 +5,18 @@
 readonly CACHE_DIR="/tmp/.run_cache_$$"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
+# Persistent cache directory — survives between runs.
+# CACHE_DIR above is removed by the EXIT trap, so anything stored there would
+# never be reused: the profile list cache (60s TTL) and the selected-index
+# state need a directory that outlives the process.
+RUN_CACHE_DIR="${RUN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/shell-menu-runner}"
+if ! mkdir -p "$RUN_CACHE_DIR" 2>/dev/null; then
+    # Fallback: no writable persistent location -> cache never hits, but the
+    # script keeps working.
+    RUN_CACHE_DIR="$CACHE_DIR"
+fi
+readonly RUN_CACHE_DIR
+
 # Memoization: Hash wird nur neu berechnet, wenn config_path wechselt
 _cache_file_last_path=""
 _cache_file_last_result=""
@@ -26,14 +38,18 @@ get_cache_file() {
         config_hash="default"
     fi
     _cache_file_last_path="$config_path"
-    _cache_file_last_result="$CACHE_DIR/state_${config_hash}"
+    _cache_file_last_result="$RUN_CACHE_DIR/state_${config_hash}"
     echo "$_cache_file_last_result"
 }
 
 get_profile_cache_file() {
-    echo "$CACHE_DIR/profiles_cache"
+    echo "$RUN_CACHE_DIR/profiles_cache"
 }
 
+# Caches the profile list for 60 seconds in the persistent cache directory.
+# NOTE: not wired into the UI paths on purpose — a 60 s TTL would hide a
+# freshly created .tasks.<profile> from the profile menu, and the listing
+# itself is only a handful of stat calls.
 cache_profiles() {
     local cache_file
     cache_file=$(get_profile_cache_file)
@@ -59,14 +75,14 @@ cache_profiles() {
 }
 
 clear_cache() {
-    rm -rf "$CACHE_DIR" 2>/dev/null || true
-    mkdir -p "$CACHE_DIR" 2>/dev/null || true
+    rm -rf "$RUN_CACHE_DIR" 2>/dev/null || true
+    mkdir -p "$RUN_CACHE_DIR" 2>/dev/null || true
 }
 
 save_state() {
     local cf
     cf=$(get_cache_file)
-    # Bash string-op instead of $(dirname) subshell: cf is always $CACHE_DIR/state_HASH
+    # Bash string-op instead of $(dirname) subshell: cf is always $RUN_CACHE_DIR/state_HASH
     mkdir -p "${cf%/*}" 2>/dev/null || true
     if ! echo "$selected_index" > "$cf" 2>/dev/null; then
         echo "WARN: failed to save state to $cf" >&2
@@ -83,6 +99,8 @@ load_state() {
 }
 
 # Cleanup cache on exit
+# Only the per-run scratch space (CACHE_DIR) is removed — the persistent cache
+# (RUN_CACHE_DIR) must survive so that the profile/state cache can be reused.
 cleanup_wrapper() {
     rm -rf "$CACHE_DIR" 2>/dev/null
     if command -v cleanup_terminal >/dev/null 2>&1; then

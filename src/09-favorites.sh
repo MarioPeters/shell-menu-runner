@@ -16,8 +16,13 @@ is_favorite() {
 toggle_favorite() {
     local task_name="$1"
     if is_favorite "$task_name"; then
-        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
-            mv "${RUN_FAVORITES_FILE}.tmp" "$RUN_FAVORITES_FILE"
+        # PID im Temp-Namen: parallele run.sh-Instanzen dürfen sich nicht
+        # gegenseitig die Temp-Datei wegschnappen.
+        local tmp="${RUN_FAVORITES_FILE}.tmp.$$"
+        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "$tmp"; then
+            mv "$tmp" "$RUN_FAVORITES_FILE" 2>/dev/null || rm -f "$tmp"
+        else
+            rm -f "$tmp"
         fi
         echo -e "${COLOR_INFO}⭐ Removed from favorites${COLOR_RESET}"
     else
@@ -42,7 +47,7 @@ show_favorites() {
     if [ "${#fav_list[@]}" -eq 0 ]; then
         echo -e "${COLOR_DIM}No favorites yet. Press [*] on a task to add it!${COLOR_RESET}"
     else
-        echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+        echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
         local idx=1
         for _fav in "${fav_list[@]}"; do
             if [ "$idx" -le 9 ]; then
@@ -53,7 +58,7 @@ show_favorites() {
             idx=$((idx + 1))
         done
     fi
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
 
     while true; do

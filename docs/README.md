@@ -43,6 +43,9 @@ Perfect for:
 
 - Installation issues
 - Configuration problems
+- Misaligned boxes with CJK/emoji names
+- Tasks that hang or cannot be stopped with Ctrl+C
+- Remote/SSH sessions without a TTY
 - Debug techniques
 
 Sections:

@@ -88,10 +88,13 @@ install_permanent() {
 
 # Run temporarily
 run_temporary() {
-    # Create temp file
+    # Create temp file.
+    # BSD mktemp (macOS) only substitutes the X placeholders at the *end* of
+    # the template — "mktemp /tmp/run.XXXXXX.sh" would create the fixed file
+    # "/tmp/run.XXXXXX.sh" (no random suffix, collision + predictable path).
     local tmp_run
-    tmp_run="$(mktemp /tmp/run.XXXXXX.sh)"
-    
+    tmp_run="$(mktemp /tmp/run.XXXXXX)"
+
     # Ensure cleanup on exit
     trap "rm -f '$tmp_run'" EXIT INT TERM
     

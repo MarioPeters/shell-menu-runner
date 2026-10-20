@@ -19,20 +19,32 @@ edit_config_menu() {
 
         case "$choice" in
             "1")
-                ${EDITOR:-nano} "$file"
-                # Restore clean terminal state after editor exit
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                run_external_editor "$file"
                 ;;
             "2")
                 clear
                 echo -e "${COLOR_HEAD}Replace File Content${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Paste your content below, then press Ctrl+D (or Ctrl+Z on Windows)${COLOR_RESET}"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
-                # Create temp file
+                # Create temp file inside $CACHE_DIR — the EXIT trap cleans it up
                 local tmp_file
-                tmp_file=$(mktemp)
-                cat > "$tmp_file"
+                tmp_file="${CACHE_DIR}/edit_$$_${RANDOM}.tmp"
+                if ! : > "$tmp_file" 2>/dev/null; then
+                    echo -e "${COLOR_ERR}$(msg temp_file_fail)${COLOR_RESET}"
+                    sleep 1
+                    continue
+                fi
+                # Without a terminal `cat` would swallow the remaining input
+                # instead of ending at EOF.
+                if [ -t 0 ]; then
+                    cat > "$tmp_file"
+                else
+                    echo -e "${COLOR_ERR}Paste mode needs an interactive terminal${COLOR_RESET}"
+                    rm -f "$tmp_file"
+                    sleep 1
+                    continue
+                fi
 
                 # Show preview
                 echo ""
@@ -45,7 +57,7 @@ edit_config_menu() {
                     mv "$tmp_file" "$file"
                     echo -e "${COLOR_SEL}✔ File updated!${COLOR_RESET}"
                 else
-                    rm "$tmp_file"
+                    rm -f "$tmp_file"
                     echo -e "${COLOR_INFO}Cancelled.${COLOR_RESET}"
                 fi
                 sleep 1
@@ -53,9 +65,9 @@ edit_config_menu() {
             "3")
                 clear
                 echo -e "${COLOR_HEAD}Current content:${COLOR_RESET}"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                 cat "$file"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                 echo ""
                 echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
                 consume_keypress
@@ -83,9 +95,7 @@ show_alias_editor() {
 # build=npm run build
 # test=npm test
 EOF
-            ${EDITOR:-nano} "$ALIAS_FILE"
-            # Restore clean terminal state after editor exit
-            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+            run_external_editor "$ALIAS_FILE"
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
@@ -99,18 +109,24 @@ EOF
 
         case "$choice" in
             "1")
-                ${EDITOR:-nano} "$ALIAS_FILE"
-                # Restore clean terminal state after editor exit
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                run_external_editor "$ALIAS_FILE"
                 ;;
             "2")
                 echo -e "\n${COLOR_INFO}Alias name:${COLOR_RESET}"
                 read -r alias_name
                 echo -e "${COLOR_INFO}Task name:${COLOR_RESET}"
                 read -r task_name
-                echo "${alias_name}=${task_name}" >> "$ALIAS_FILE"
-                echo -e "${COLOR_SEL}✔ Alias added!${COLOR_RESET}"
-                sleep 1
+                # The alias file format is "alias_name=task_name" — an '=' or
+                # whitespace in the alias name would break the parsing.
+                if [ -z "$alias_name" ] || [ -z "$task_name" ] \
+                   || [[ "$alias_name" == *"="* ]] || [[ "$alias_name" == *[[:space:]]* ]]; then
+                    echo -e "${COLOR_ERR}Invalid alias name (no '=' or whitespace allowed)${COLOR_RESET}"
+                    sleep 1
+                else
+                    echo "${alias_name}=${task_name}" >> "$ALIAS_FILE"
+                    echo -e "${COLOR_SEL}✔ Alias added!${COLOR_RESET}"
+                    sleep 1
+                fi
                 ;;
         esac
     fi
@@ -129,9 +145,10 @@ load_aliases() {
 resolve_alias() {
     local input="$1"
     if [ -f "$ALIAS_FILE" ]; then
-        # awk for exact match – safe with special chars, no grep regex risks, no cut fork
+        # awk for exact match – safe with special chars, no grep regex risks, no cut fork.
+        # sub() instead of $2: the alias value may contain '=' itself.
         local resolved
-        resolved=$(awk -F'=' -v a="$input" '$1 == a { print $2; exit }' "$ALIAS_FILE" 2>/dev/null || true)
+        resolved=$(awk -v a="$input" 'index($0, a "=") == 1 { print substr($0, length(a) + 2); exit }' "$ALIAS_FILE" 2>/dev/null || true)
         if [ -n "$resolved" ]; then
             echo "$resolved"
             return 0
@@ -166,7 +183,7 @@ settings_menu() {
                 echo "2) MONO"
                 echo "3) DARK"
                 echo "4) LIGHT"
-                theme_choice=$(read_key) || continue
+                theme_choice=$(read_key) || break
                 case "$theme_choice" in
                     "1") UI_THEME="CYBER";;
                     "2") UI_THEME="MONO";;
@@ -187,7 +204,7 @@ settings_menu() {
                 ;;
             "3")
                 echo -e "\n${COLOR_INFO}Column Layout (1-4):${COLOR_RESET}"
-                col_val=$(read_key) || continue
+                col_val=$(read_key) || break
                 if [[ "$col_val" =~ [1-4] ]]; then
                     COLS_MIN="$col_val"
                     COLS_MAX="$col_val"

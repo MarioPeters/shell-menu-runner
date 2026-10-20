@@ -75,7 +75,9 @@ execute_task_deps() {
             # Find and execute the dependency task using helper
             if ! find_task_in_menu "$dep" '_execute_dep_callback'; then
                 echo -e "${COLOR_ERR}❌ Dependency '$dep' not found in:${COLOR_RESET}"
-                for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+                if [ ${#task_config_files[@]} -gt 0 ]; then
+                    for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+                fi
                 return 1
             fi
         done
@@ -226,7 +228,7 @@ analyze_project() {
     )
 
     echo -e "\n${COLOR_SEL}📊 Project Analysis${COLOR_RESET}"
-    echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
     # 1. Basic Stats
     echo -e "${COLOR_INFO}📈 Statistics:${COLOR_RESET}"
@@ -310,7 +312,7 @@ analyze_project() {
     echo -e "  • Validate: ${COLOR_DIM}run --validate${COLOR_RESET}  (check syntax)"
     echo -e "  • Documentation: ${COLOR_DIM}docs/ADVANCED_USAGE.md${COLOR_RESET}  (learn patterns)"
 
-    echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}\n"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}\n"
 
     return 0
 }
@@ -324,14 +326,16 @@ find_task_in_menu() {
     # Task format: level|name|cmd|desc — skip level field with _level.
     local search_name="$1"
     local callback="$2"
-    local -a opts
+    local -a opts=()
     IFS=$'\n' read -d '' -r -a opts < <(get_all_tasks) || true
+    # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+    [ ${#opts[@]} -eq 0 ] && return 1
 
     for opt in "${opts[@]}"; do
-        IFS='|' read -r _level opt_name opt_cmd opt_desc <<< "$opt"
-        if [ "$opt_name" = "$search_name" ]; then
+        split_task_line "$opt"
+        if [ "$_f_name" = "$search_name" ]; then
             # Direkter Funktionsaufruf statt eval: schneller und sicherer
-            "$callback" "$opt_name" "$opt_cmd" "$opt_desc"
+            "$callback" "$_f_name" "$_f_cmd" "$_f_desc"
             return 0
         fi
     done
@@ -345,7 +349,7 @@ preview_task() {
 
     clear
     echo -e "${COLOR_HEAD}Preview: $name${COLOR_RESET}"
-    echo -e "${COLOR_DIM}──────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
     echo -e "${COLOR_INFO}Description:${COLOR_RESET}"
     echo -e "  $desc\n"

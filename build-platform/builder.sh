@@ -403,29 +403,48 @@ run_tests() {
 run_linter() {
     log_step "Running shellcheck..."
 
+    local errors=0
+
     if ! command -v shellcheck &>/dev/null; then
         log_warn "shellcheck not installed, skipping lint"
-        return 0
+    else
+        local files_to_check=(
+            "$BP_ROOT/run.sh"
+            "$BP_ROOT/build.sh"
+            "$BP_ROOT/install.sh"
+        )
+
+        for file in "${files_to_check[@]}"; do
+            if [ -f "$file" ]; then
+                log_dim "  Checking $file..."
+                if shellcheck -x "$file"; then
+                    log_success "  ✓ $file"
+                else
+                    log_error "  ✗ $file"
+                    errors=$((errors + 1))
+                fi
+            fi
+        done
     fi
 
-    local files_to_check=(
-        "$BP_ROOT/run.sh"
-        "$BP_ROOT/build.sh"
-        "$BP_ROOT/install.sh"
-    )
-
-    local errors=0
-    for file in "${files_to_check[@]}"; do
-        if [ -f "$file" ]; then
-            log_dim "  Checking $file..."
-            if shellcheck -x "$file"; then
-                log_success "  ✓ $file"
+    # The zsh completion is not valid bash (glob qualifiers, zsh modifiers),
+    # so ShellCheck cannot check it.  `zsh -n` verifies the syntax instead —
+    # without it a broken completion ships unnoticed (it was syntactically
+    # invalid from v1.7.0 on and still is not covered by any check).
+    local completion_file="$BP_ROOT/completions/_run"
+    if [ -f "$completion_file" ]; then
+        if command -v zsh &>/dev/null; then
+            log_dim "  Checking $completion_file (zsh -n)..."
+            if zsh -n "$completion_file"; then
+                log_success "  ✓ $completion_file"
             else
-                log_error "  ✗ $file"
+                log_error "  ✗ $completion_file"
                 errors=$((errors + 1))
             fi
+        else
+            log_warn "zsh not installed, skipping syntax check of $completion_file"
         fi
-    done
+    fi
 
     if [ $errors -eq 0 ]; then
         log_success "Linting passed"

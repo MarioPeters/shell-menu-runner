@@ -195,6 +195,7 @@ export RUN_PARALLEL_DEPS=1
 - Progress bar rendering
 - Progress marker detection
 - Formatted output with alignment
+- Column-accurate layout (CJK/emoji = 2 terminal columns)
 
 **Color functions:**
 
@@ -204,6 +205,20 @@ render_progress_bar() # Display [========------] 50%
 process_progress_output() # Detect [progress:50%] markers
 format_table()        # Align columnar output
 ```
+
+**Width measurement (`03-terminal.sh`):**
+
+```bash
+display_width <str>   # → $DISPLAY_WIDTH: terminal columns of a UTF-8 string
+fit_to_width <str> <n> # → $FIT_TEXT: padded/truncated to exactly n columns
+separator_line [max]  # Horizontal rule that fits the terminal width
+```
+
+The width is measured in **terminal columns**, not bytes or characters: a CJK
+glyph or an emoji occupies two columns, a combining mark none. Truncation
+never splits a UTF-8 character, so the box borders stay aligned for any task
+name. The padded fields are cached per menu index (`_name_field_cache`) —
+measuring them on every redraw was the dominant cost.
 
 **Themes:**
 
@@ -352,6 +367,19 @@ main()
     fi
   done
 ```
+
+### Task Execution Guarantees
+
+`run_task_streamed()` (`12-execution.sh`) is the single entry point for
+running a task. It guarantees that the menu always comes back:
+
+| Guarantee | Implementation |
+|-----------|----------------|
+| **Ctrl+C stops the task** | The command runs in the *foreground* and the menu uses `trap ':' INT`. Bash sets `SIGINT` to *ignore* for background jobs and passes an *ignored* signal on to children — both would make the task unstoppable. |
+| **The menu never waits forever** | The menu waits for the *process*, not for the end of the output pipe. A task that leaves a background process behind (`cmd &`, a release script starting a server) keeps the pipe open forever. |
+| **The timeout works everywhere** | macOS ships no `timeout` binary, so a watchdog kills the command after `TIMEOUT=` seconds (default 300) and reports exit code 124. |
+| **Output stays live** | The output travels through a FIFO: the reader streams it to the terminal and the log file while the command runs. |
+| **The terminal is restored** | `stty sane` + cursor reset in the EXIT trap, even after a crash. |
 
 ---
 
@@ -574,8 +602,8 @@ git push origin feature/my-feature
 | Module | Responsibility |
 |--------|----------------|
 | `02-utils.sh` | Shared helpers (`trim_file_to_lines`, `get_realpath`, …) |
-| `03-terminal.sh` | Terminal caps, `init_context`, `build_border_strings` |
-| `12-execution.sh` | `execute_task`, `cli_list_tasks`, `cli_run_task` |
+| `03-terminal.sh` | Terminal caps, `init_context`, `build_border_strings`, UTF-8 display width (`display_width`, `fit_to_width`) |
+| `12-execution.sh` | `execute_task`, `run_task_streamed` (timeout + Ctrl+C), `cli_list_tasks`, `cli_run_task` |
 | `13-ui.sh` | `main_interactive_loop`, `draw_menu`, `_reload_menu` |
 | `16-main.sh` | `main()`, CLI arg parser |
 
@@ -641,6 +669,11 @@ declare -F | awk '{print $3}'
 3. **Parallel multi-profile** (execute across profiles)
 4. **Split profiles** (reduce menu size)
 5. **Use lazy-loading** (load on demand)
+6. **No here-strings in loops** — a here-string creates a temp file in Bash 3.2
+   (~130 µs per call). `split_task_line` uses parameter expansion (~10 µs).
+7. **No `tr` per line** — `shopt -s nocasematch` instead of a fork per entry.
+8. **Cache the padded name fields** — the display width is measured once per
+   menu entry, not on every redraw.
 
 ### Benchmark Results
 
@@ -656,6 +689,11 @@ Parallel:   3s → 3x faster
 # Multi-profile (3 profiles)
 Sequential: 15s
 Parallel:   5s → 3x faster
+
+# 100 tasks in .tasks (macOS, Bash 3.2)
+Menu reload (get_menu_options):  34ms → 23ms
+CLI --list:                       75ms → 55ms
+CLI --run <name>:                468ms → 130ms  (3.6x)
 ```
 
 ---
@@ -677,6 +715,10 @@ Before submitting PR:
 ✅ Parallel works:      RUN_PARALLEL_DEPS=1 run
 ✅ Multi-profile works: run --across profile1,profile2 task
 ✅ No regressions:      All existing features still work
+✅ No TTY works:        echo 1 | run            (task list + execution)
+✅ Ctrl+C stops a task: run → start a long task → Ctrl+C → menu returns
+✅ Timeout works:       TIMEOUT=5 + a 30s task → killed after 5s
+✅ Terminal restored:   after every exit the shell echoes and edits normally
 ```
 
 ---

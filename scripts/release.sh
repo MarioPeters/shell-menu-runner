@@ -130,16 +130,30 @@ fi
 cecho "${C_OK}✓ Prerequisites met${C_RST}"
 
 cecho "${C_DIM}→ Running bash syntax checks...${C_RST}"
-if bash -n run.sh install.sh scripts/release.sh integrations/alfred/alfred_workflow_script.sh integrations/raycast/run-project.sh integrations/zsh/run_widget.zsh; then
+if bash -n run.sh install.sh scripts/release.sh integrations/alfred/alfred_workflow_script.sh integrations/raycast/run-project.sh; then
   cecho "${C_OK}✓ Bash syntax OK${C_RST}"
 else
   cecho "${C_ERR}✗ Bash syntax check failed${C_RST}" >&2
   exit 1
 fi
 
+# The zsh files are not valid bash (glob qualifiers, zsh modifiers) — they are
+# checked with `zsh -n` instead of `bash -n`/shellcheck.
+if command -v zsh >/dev/null 2>&1; then
+  cecho "${C_DIM}→ Running zsh syntax checks...${C_RST}"
+  if zsh -n integrations/zsh/run_widget.zsh completions/_run; then
+    cecho "${C_OK}✓ Zsh syntax OK${C_RST}"
+  else
+    cecho "${C_ERR}✗ Zsh syntax check failed${C_RST}" >&2
+    exit 1
+  fi
+else
+  cecho "${C_WARN}⚠ zsh not found. Skipping zsh syntax check.${C_RST}"
+fi
+
 if command -v shellcheck >/dev/null 2>&1; then
   cecho "${C_DIM}→ Running shellcheck...${C_RST}"
-  if shellcheck run.sh install.sh integrations/alfred/alfred_workflow_script.sh integrations/raycast/run-project.sh integrations/zsh/run_widget.zsh; then
+  if shellcheck run.sh install.sh integrations/alfred/alfred_workflow_script.sh integrations/raycast/run-project.sh; then
     cecho "${C_OK}✓ Shellcheck passed${C_RST}"
   else
     cecho "${C_ERR}✗ Shellcheck failed${C_RST}" >&2
@@ -200,9 +214,14 @@ fi
 
 cecho "\n${C_DIM}[1/5] Updating version references...${C_RST}"
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i '' -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh
-  sed -i '' -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md
-  sed -i '' -E "s/Version [0-9.]+ \(/Version $version (/g" README.md
+  # Portable sed -i: GNU sed needs no suffix argument, BSD sed (macOS)
+  # requires one.  The first form fails on macOS, the second one on GNU.
+  sed -i -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh 2>/dev/null || \
+    sed -i '' -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh
+  sed -i -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md 2>/dev/null || \
+    sed -i '' -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md
+  sed -i -E "s/Version [0-9.]+ \(/Version $version (/g" README.md 2>/dev/null || \
+    sed -i '' -E "s/Version [0-9.]+ \(/Version $version (/g" README.md
   cecho "${C_OK}✓ Version updated to $version in src/00-header.sh${C_RST}"
 else
   cecho "${C_DIM}  - src/00-header.sh: readonly VERSION=\"$version\"${C_RST}"
@@ -226,7 +245,8 @@ else
 fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i '' -E "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md
+  sed -i -E "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md 2>/dev/null || \
+    sed -i '' -E "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md
   python3 - <<PY
 from pathlib import Path
 import re

@@ -21,12 +21,20 @@ get_realpath() {
     fi
 }
 cleanup_terminal() {
+    # Reset the terminal mode first: if the script dies inside the raw mode
+    # the shell would stay without echo and without line editing.
+    stty sane 2>/dev/null || true
+    # The cursor-restore sequence is terminal control output, not data: it must
+    # not end up in the stdout stream of `run --version` / `run --list`.
+    # It is only emitted when stdout is a terminal and goes to stderr, so that a
+    # piped stdout stays free of escape sequences.
+    [ -t 1 ] || return 0
     if [ -n "${TPUT_CNORM:-}" ]; then
-        echo -ne "$TPUT_CNORM"
+        echo -ne "$TPUT_CNORM" >&2
     else
-        tput cnorm 2>/dev/null || true
+        tput cnorm >&2 2>/dev/null || true
     fi
-    echo -e "${COLOR_RESET}";
+    echo -e "${COLOR_RESET}" >&2
 }
 handle_interrupt() { cleanup_terminal; clear; exit 130; }
 trap cleanup_terminal EXIT
@@ -50,14 +58,19 @@ sanitize_filename() { sed 's/ /_/g; s/[^A-Za-z0-9._-]//g' <<< "$1"; }
 
 # Kürzt eine Datei auf maximal $2 Zeilen (via tail).
 # Wird von add_to_history, add_to_recent und save_search_term genutzt.
+# Die Temp-Datei enthält die PID, damit parallele run.sh-Instanzen sich nicht
+# gegenseitig die Temp-Datei wegschnappen (Race → "mv: No such file or directory").
 trim_file_to_lines() {
     local file="$1" max="$2"
     [ -f "$file" ] || return 0
     local lines
     lines=$(wc -l < "$file" 2>/dev/null || echo 0)
     if [ "$lines" -gt "$max" ]; then
-        if tail -n "$max" "$file" > "${file}.tmp"; then
-            mv "${file}.tmp" "$file" || rm -f "${file}.tmp"
+        local tmp="${file}.tmp.$$"
+        if tail -n "$max" "$file" > "$tmp"; then
+            mv "$tmp" "$file" 2>/dev/null || rm -f "$tmp"
+        else
+            rm -f "$tmp"
         fi
     fi
 }
@@ -67,6 +80,45 @@ trim_whitespace() {
     s="${s#"${s%%[![:space:]]*}"}"
     s="${s%"${s##*[![:space:]]}"}"
     printf "%s" "$s"
+}
+
+# Splits a "level|name|command|description" line into its fields.
+#
+# A here-string (`IFS='|' read -r a b c d <<< "$line"`) creates a temporary
+# file in Bash 3.2 and costs ~130 µs per call — in the menu loops (once per
+# config line and once per visible entry) that alone dominated the redraw
+# time.  Parameter expansion needs ~10 µs and no fork.
+#
+# Result: _f_level, _f_name, _f_cmd, _f_desc
+# The last field keeps any remaining separators (same as `read`).
+_f_level=""
+_f_name=""
+_f_cmd=""
+_f_desc=""
+split_task_line() {
+    local _rest="$1"
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_level="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_level="$_rest"
+        _rest=""
+    fi
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_name="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_name="$_rest"
+        _rest=""
+    fi
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_cmd="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_cmd="$_rest"
+        _rest=""
+    fi
+    _f_desc="$_rest"
 }
 
 # Cross-platform file mtime (optimization: check method once)

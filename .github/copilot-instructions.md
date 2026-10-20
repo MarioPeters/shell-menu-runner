@@ -28,7 +28,9 @@ This project is a modular Bash-based task runner and menu system.
 ## Coding Guidelines (Bash)
 
 - **Strict Mode**: The script runs with `set -euo pipefail`. Ensure all variables are checked for existence (`${VAR:-}`) and commands that might fail are handled (`cmd || true`).
-- **ShellCheck**: All code must pass ShellCheck.
+- **ShellCheck**: All code must pass ShellCheck. The zsh files (`completions/_run`,
+  `integrations/zsh/run_widget.zsh`) are not valid bash — they are checked with
+  `zsh -n` (ShellCheck cannot parse zsh syntax).
 - **Modularity**: Keep functions small and grouped by responsibility (e.g., `13-ui.sh` for UI logic).
 - **Architecture**: See `docs/ARCHITECTURE.md` for detailed design principles.
 
@@ -65,21 +67,37 @@ These patterns MUST always be applied when writing or modifying code in this pro
   - Multiple `grep -c` calls on the same file → single `awk` pass computing all counters.
   - `wc -l` + `tail` + `mv` for file trimming → use the shared `trim_file_to_lines()` helper in `02-utils.sh`.
 - **Memoize** results of expensive lookups (hashes, stat) that don't change within a session using module-level variables (e.g., `_cache_file_last_path` / `_cache_file_last_result` pattern in `05-cache.sh`).
+- **No here-strings in loops**: a here-string (`<<<`) creates a temporary file in Bash 3.2 and costs ~130 µs per call (vs. ~10 µs for parameter expansion). In the menu loops (once per config line, once per visible entry) that dominated the redraw time. Use `split_task_line` (`02-utils.sh`) instead of `IFS='|' read -r a b c d <<< "$line"`.
+- **No `tr` per line** for case-insensitive comparison: wrap the comparison in `shopt -s nocasematch` / restore with `shopt -u nocasematch` (Bash 3.2 has no `${var,,}`).
 
 ### Cache terminal capabilities
 
 - Terminal strings (`tput civis`, `tput cnorm`, `tput cup`, `tput cols`) are initialized ONCE in `init_terminal_capabilities()` (`03-terminal.sh`) and stored in `TPUT_*` variables. **Never** call `tput` directly at runtime; always use the cached variables.
 - The one-time guard uses a dedicated `_TPUT_INITIALIZED` flag (not `[ -n "${TPUT_COLS:-}" ]`) because `tput cols` can return an empty string when there is no TTY, which would cause the guard to fail on every call.
+- `TPUT_*` and `HAS_TPUT` have **defaults** so the non-interactive path (SSH without `-t`, pipes, cron) does not abort with `set -u`.
 - Static decoration strings (e.g., the 60-char `═` border) must be built ONCE with lazy init: `: "${_VAR:=$(...)}"` – never rebuilt on every render call.
-- Temp/parallel log files must be placed in `$CACHE_DIR` (not `/tmp/...`) so they are cleaned up automatically by the `cleanup_wrapper` EXIT trap.
+- Temp/parallel log files must be placed in `$CACHE_DIR` (not `/tmp/...`) so they are cleaned up automatically by the `cleanup_wrapper` EXIT trap. `$CACHE_DIR` is per-run scratch space; data that must survive between runs belongs in `$RUN_CACHE_DIR` (`~/.cache/shell-menu-runner`).
+- Terminal control sequences (cursor hide/show) must not end up in the stdout data stream: send them to **stderr** and only when stdout is a terminal (`[ -t 1 ]`). `run --version` and `run --list` have to stay machine-readable.
+- The terminal width is measured in **columns**, not bytes: use `display_width` / `fit_to_width` (`03-terminal.sh`) — CJK glyphs and emoji occupy two columns.
+
+### Terminal & signal safety
+
+- **Every** `stty` / `tput` call needs `|| true`. Without a TTY the call fails and `set -e` would abort the whole script.
+- `trap '' INT` (ignore) is **inherited by child processes** → the task could never be stopped with Ctrl+C. Use `trap ':' INT` instead: bash resets a *trapped* signal to its default in the child.
+- Bash sets `SIGINT`/`SIGQUIT` to *ignore* for **background jobs** → run task commands in the **foreground**, never with `&`.
+- Never wait for the *end of an output pipe* — a task that leaves a background process behind keeps the pipe open forever. Wait for the process itself (`run_task_streamed` in `12-execution.sh`).
+- macOS has no `timeout` binary → the task timeout is enforced by a watchdog, not by GNU coreutils.
 
 ### DRY – eliminate duplicate code patterns
 
 - **`trim_file_to_lines <file> <max>`** (`02-utils.sh`): use it everywhere a file is capped to N lines. Do NOT re-implement `wc -l / tail / mv` inline.
 - **`_grep [flags] pattern file`** (`02-utils.sh`): use it for all external grep-on-file calls — uses `rg` if installed, falls back to `grep`.
+- **`split_task_line <line>`** (`02-utils.sh`): splits `LEVEL|NAME|CMD|DESC` into `$_f_level`, `$_f_name`, `$_f_cmd`, `$_f_desc` — use instead of a here-string.
+- **`display_width <str>` / `fit_to_width <str> <n>`** (`03-terminal.sh`): terminal column width of a string / pad or truncate it to exactly N columns.
 - **`_reload_menu`** (`13-ui.sh`): call it instead of the 3-line `IFS read < <(get_menu_options) + calculate_layout` pattern.
 - **`_reinit_menu`** (`13-ui.sh`): call it instead of the 5-function sequence `parse_config_vars + load_settings + load_state + detect_config_files + load_aliases + _reload_menu`.
 - **`run_with_term_paused <fn> [args]`** (`13-ui.sh`): wrap every `restore_term; <function>; [ is_interactive ] && stty raw` triplet with this helper.
+- **`run_task_streamed <script> <log> <secs> <cmd…>`** (`12-execution.sh`): runs a task with live output, timeout and working Ctrl+C.
 
 ### Safe function dispatch
 
@@ -94,10 +112,12 @@ These patterns MUST always be applied when writing or modifying code in this pro
 - **Config**: `src/01-config.sh` handles loading `.tasks` files.
 - **UI**: `src/13-ui.sh` contains the main interactive loop and key handling.
 - **Execution**: `src/12-execution.sh` handles running selected tasks. Supports `--dry-run` (shows command without executing) and `--run <name|number>` CLI mode.
-- **Utils**: `src/02-utils.sh` contains shared helpers incl. `trim_file_to_lines()`, `_grep()` (rg/grep fallback), `get_realpath()`, `get_file_mtime()`.
+- **Utils**: `src/02-utils.sh` contains shared helpers incl. `trim_file_to_lines()`, `_grep()` (rg/grep fallback), `split_task_line()`, `get_realpath()`, `get_file_mtime()`.
+- **Terminal**: `src/03-terminal.sh` holds the TTY detection, the UTF-8 column measurement (`display_width`, `fit_to_width`) and the key reading.
 - **Cache**: `src/05-cache.sh` handles state persistence and memoization.
 
 ## Troubleshooting
 
 - If the script exits unexpectedly, check for unhandled errors due to `set -e`.
 - Use `bash -x ./run.sh` to trace execution flow.
+- If the terminal is left without echo or in raw mode after a crash: `stty sane` (the EXIT trap does this automatically — check that the script is not killed with SIGKILL).

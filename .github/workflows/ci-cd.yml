@@ -30,7 +30,13 @@ jobs:
 
       - name: Run ShellCheck
         run: |
-          shellcheck run.sh build.sh install.sh || true
+          shellcheck run.sh build.sh install.sh
+
+      - name: Check zsh completion syntax
+        run: |
+          # The completion is zsh-only code (glob qualifiers, zsh modifiers) —
+          # ShellCheck cannot parse it, `zsh -n` verifies the syntax.
+          zsh -n completions/_run
 
       - name: Validate task files
         run: |

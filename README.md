@@ -55,12 +55,13 @@ Version 2.1.3 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 
 - **Dependencies:** Use `[depends: task1,task2]` to automatically execute prerequisite tasks.
 - **Task History:** Press `!` to view execution history with status & timing.
-- **Timeout Protection:** Tasks with long runtime are automatically killed after 5 min (configurable).
+- **Timeout Protection:** Tasks with long runtime are automatically killed after 5 min (configurable via `TIMEOUT=`). Works on macOS without GNU coreutils — and `Ctrl+C` always stops a running task.
 - **Performance Stats:** Each task shows execution time for optimization insights.
 
 **7) 🎨 UI & UX**
 
 - **Themes:** CYBER (cyan/magenta) / MONO (minimal grayscale) / DARK (bright colors on dark) / LIGHT (softer colors for light terminals) via `# THEME:`.
+- **Unicode-Safe Layout:** Task names with CJK characters, emoji or accents are measured in terminal columns (2 per wide glyph) — the boxes stay aligned and long names are truncated without breaking a character.
 - **Status Bar:** Top bar displays time, mode (local/global), active profile, and current filters.
 - **Loading Indicator:** Animated spinner shows progress during parallel dependency execution.
 - **Settings Menu:** Press `s` to configure theme, columns, and language (stored in `.runrc`).
@@ -352,12 +353,16 @@ ssh-run user@server "cd project && run"
 
 **Without `-t`, the tool will run in non-interactive mode:**
 
-- Type task numbers (1-9) directly to execute
-- Type `e` to edit configuration
-- Type `g` to switch global/local mode
-- Type `q` to quit
+- The task list is printed with numbers — type a number **or a task name** to run it
+- `q` quits the session
+- Tasks run in CLI mode: no preview, no "press any key" prompts
+- Works in pipelines and CI as well, e.g. `run --run "<task>"`
 
 The tool automatically detects SSH sessions without TTY and displays instructions.
+
+> **Note:** The terminal width is detected via `SIGWINCH`. Some SSH clients do
+> not deliver that signal on a resize — the menu therefore also polls the
+> width periodically and re-lays out automatically.
 
 ### 🗑️ Uninstall
 
@@ -437,12 +442,13 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 
 - **Dependencies:** `[depends: task1,task2]` führt automatisch abhängige Tasks aus.
 - **Task-Verlauf:** Drücke `!` um Ausführungsverlauf mit Status & Laufzeit zu sehen.
-- **Timeout-Schutz:** Tasks werden nach 5 Minuten automatisch beendet (konfigurierbar).
+- **Timeout-Schutz:** Tasks werden nach 5 Minuten automatisch beendet (konfigurierbar via `TIMEOUT=`). Funktioniert auf macOS ohne GNU coreutils — und `Ctrl+C` bricht einen laufenden Task immer ab.
 - **Performance-Stats:** Jeder Task zeigt die Ausführungszeit für Optimierungen.
 
 **7) 🎨 UI & UX**
 
 - **Themes:** CYBER (cyan/magenta) / MONO (minimalistisch grau) / DARK (helle Farben auf dunkel) / LIGHT (sanfte Farben für helle Terminals) via `# THEME:`.
+- **Unicode-sicheres Layout:** Task-Namen mit CJK-Zeichen, Emoji oder Akzenten werden in Terminal-Spalten gemessen (2 pro breitem Glyph) — die Boxen bleiben bündig, lange Namen werden ohne Zeichenbruch gekürzt.
 - **Status Bar:** Obere Leiste zeigt Zeit, Modus (local/global), aktives Profil und aktive Filter.
 - **Loading Indicator:** Animierter Spinner zeigt Fortschritt bei paralleler Dependency-Ausführung.
 - **Einstellungen:** Mit `s` lassen sich Theme, Spalten und Sprache konfigurieren.
@@ -701,12 +707,17 @@ ssh-run user@server "cd projekt && run"
 
 **Ohne `-t` läuft das Tool im nicht-interaktiven Modus:**
 
-- Gib Task-Nummern (1-9) direkt ein zur Ausführung
-- Tippe `e` um Konfiguration zu bearbeiten
-- Tippe `g` für global/lokal Modus-Wechsel
-- Tippe `q` zum Beenden
+- Die Task-Liste wird mit Nummern ausgegeben — tippe eine Nummer **oder den Task-Namen**
+- `q` beendet die Session
+- Tasks laufen im CLI-Modus: keine Vorschau, keine "Taste drücken"-Prompts
+- Funktioniert auch in Pipes und CI, z. B. `run --run "<task>"`
 
 Das Tool erkennt automatisch SSH-Sessions ohne TTY und zeigt Anleitungen an.
+
+> **Hinweis:** Die Terminalbreite wird über `SIGWINCH` erkannt. Manche
+> SSH-Clients liefern dieses Signal beim Resize nicht — das Menü fragt die
+> Breite deshalb zusätzlich in regelmäßigen Abständen ab und ordnet sich
+> automatisch neu.
 
 ### 🔧 Entwicklung
 

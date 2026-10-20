@@ -278,6 +278,59 @@ stty size                    # Check terminal size
 
 ---
 
+### Problem: Box borders wrap / lines do not fit (CJK, Emoji)
+
+**Diagnosis:**
+
+```bash
+stty size                    # terminal width
+```
+
+Task names with CJK characters or emoji occupy **two** terminal columns. If the
+name field is measured in bytes or characters, the content line becomes wider
+than the box and the terminal wraps the line.
+
+**Solutions:**
+
+1. **Use a wider terminal** — the menu adapts to the available width, but
+   very narrow terminals (< 40 columns) cut long names.
+
+2. **Shorten the task name** in `.tasks`:
+
+   ```bash
+   0|Status|git status -sb|Working tree status
+   ```
+
+---
+
+### Problem: Task hangs and the menu does not come back
+
+**Diagnosis:**
+
+```bash
+# The configured timeout applies to every task
+grep TIMEOUT .tasks          # e.g. TIMEOUT=300
+```
+
+A task that waits for input (password prompt, `git push` asking for
+credentials) blocks until it is answered. Press **Ctrl+C** to stop the task —
+the menu continues and reports `Abgebrochen (Ctrl+C)`.
+
+**Solutions:**
+
+1. **Set a timeout** in `.tasks` (seconds, default 300):
+
+   ```bash
+   TIMEOUT=60
+   ```
+
+2. **Do not let a task keep background processes alive** — a task that starts a
+   server in the background (`npm run dev &`) keeps the output pipe open. The
+   menu no longer waits for it, but the process itself stays alive; stop it
+   with `pkill -f "npm run dev"`.
+
+---
+
 ### Problem: SSH/Remote terminal looks broken
 
 **Solution:**

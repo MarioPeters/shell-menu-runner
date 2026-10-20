@@ -11,8 +11,11 @@ save_search_term() {
 
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
-        mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
+        # PID im Temp-Namen: parallele run.sh-Instanzen dürfen sich nicht
+        # gegenseitig die Temp-Datei wegschnappen.
+        local tmp="${SEARCH_HISTORY_FILE}.tmp.$$"
+        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "$tmp" 2>/dev/null || true
+        mv "$tmp" "$SEARCH_HISTORY_FILE" 2>/dev/null || rm -f "$tmp"
     fi
 
     echo "$term" >> "$SEARCH_HISTORY_FILE"
@@ -41,7 +44,7 @@ interactive_search() {
     if [ ${#history_items[@]} -gt 0 ]; then
         echo -e "${COLOR_DIM}Recent: ${history_items[0]}${COLOR_RESET}"
     fi
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo -n "Search: "
 
     while true; do

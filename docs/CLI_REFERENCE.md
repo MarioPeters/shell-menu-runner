@@ -71,6 +71,22 @@ run --run build
 If a substring matches multiple tasks, a disambiguation prompt is shown.
 Exit code reflects the executed task's exit code — suitable for CI/scripting.
 
+### Non-Interactive Session (no TTY)
+
+When stdin is not a terminal (e.g. `ssh host "run"` without `-t`, a pipe or a
+cron job), the menu cannot be drawn. The task list is printed instead and the
+tasks are selected by **number or name**:
+
+```bash
+# Print the task list, then run task 3
+ssh host "cd project && run" <<< "3"
+
+# Run by name
+ssh host "cd project && run" <<< "Build Project"
+```
+
+In this mode tasks run in CLI mode: no preview, no "press any key" prompt.
+
 ---
 
 ## Configuration Files

@@ -3,36 +3,30 @@
 # ==============================================================================
 
 find_local_config() {
-    set +e
     local d="$PWD"
     while [ "$d" != "/" ]; do
         if [ -f "$d/$LOCAL_CONFIG" ]; then
             echo "$d/$LOCAL_CONFIG"
-            set -e
             return 0
         fi
         # Bash-String-Op statt dirname-Subshell
         d="${d%/*}"
         [ -z "$d" ] && d="/"
     done
-    set -e
     return 1
 }
 
 find_named_config() {
     local name="$1"
-    set +e
     local d="$PWD"
     while [ "$d" != "/" ]; do
         if [ -f "$d/.tasks.$name" ]; then
             echo "$d/.tasks.$name"
-            set -e
             return 0
         fi
         d="${d%/*}"
         [ -z "$d" ] && d="/"
     done
-    set -e
     return 1
 }
 
@@ -65,20 +59,29 @@ list_available_profiles() {
 init_profile() {
     local name="$1"
     [ -z "$name" ] && { echo "Error: profile name required"; return 1; }
-    
+    # Der Name landet im Dateinamen — Pfad-Traversal und Leerzeichen sind nicht
+    # erlaubt (Format des Alias-Dateiformats "name=value" bzw. ".tasks.<name>").
+    case "$name" in
+        */*|*" "*) echo "Error: invalid profile name (no '/' or spaces)"; return 1 ;;
+    esac
+
     local profile_file="$PWD/.tasks.$name"
     [ -f "$profile_file" ] && { echo "Profile $name already exists at $profile_file"; return 1; }
-    
+
     echo "Creating profile: $name"
-    cat > "$profile_file" << 'EOF'
+    local template
+    template="$(cat << 'EOF'
 # Profile: {NAME}
 # Auto-generated task list for {NAME}
 
 0|Task Name|command|Description here
 0|Another Task|echo "Hello"|Runs a simple command
 EOF
-    
-    sed -i '' "s/{NAME}/$name/g" "$profile_file" 2>/dev/null || sed -i "s/{NAME}/$name/g" "$profile_file"
+)"
+    # Bash-String-Op statt sed -i (kein Fork, kein Escaping-Problem)
+    template=${template//\{NAME\}/$name}
+    printf '%s\n' "$template" > "$profile_file"
+
     echo "Profile created: $profile_file"
     echo "Edit with: ${EDITOR:-nano} $profile_file"
 }
@@ -135,11 +138,12 @@ list_profiles_all() {
         echo "{"
         echo "  \"profiles\": ["
         local first=1
+        # Process-Substitution statt Here-String (kein temporäres File)
         while IFS= read -r prof; do
             [ "$first" -eq 0 ] && echo ","
             first=0
             echo "    { \"name\": \"$prof\" }"
-        done <<< "$profiles_str"
+        done < <(printf '%s\n' "$profiles_str")
         echo ""
         echo "  ]"
         echo "}"
@@ -148,7 +152,7 @@ list_profiles_all() {
         echo ""
         while IFS= read -r prof; do
             echo "  • $prof"
-        done <<< "$profiles_str"
+        done < <(printf '%s\n' "$profiles_str")
     fi
 }
 
@@ -224,7 +228,7 @@ select_profile_menu() {
         if [ "$filter_active" -eq 1 ]; then
             echo -e "${COLOR_INFO}Filter: ${filter_pattern}_${COLOR_RESET} (ESC to clear)"
         fi
-        echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+        echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
         
         local start=$((page * per_page))
         local end=$((start + per_page))

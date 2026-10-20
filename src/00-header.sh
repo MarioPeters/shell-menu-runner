@@ -1,14 +1,24 @@
 #!/bin/bash
 
 # Ensure we are running in Bash, not Zsh (if sourced or run with 'zsh script.sh')
+#
+# Zsh has no BASH_SOURCE, and $0 cannot distinguish "sourced" from "executed":
+# in both cases $0 is the path of the script itself.  $ZSH_EVAL_CONTEXT
+# (zsh >= 5.0.3) does distinguish them:
+#   toplevel            -> the script was executed  -> re-exec with bash
+#   cmdarg:file         -> the script was sourced    -> refuse
+#   cmdarg:shfunc:file -> the script was sourced    -> refuse
 if [ -n "${ZSH_VERSION:-}" ]; then
-    if [ "${BASH_SOURCE[0]}" != "$0" ]; then
-        echo "Error: This script is not meant to be sourced directly in Zsh."
-        return 1
-    else
-        # Re-execute with bash if run as 'zsh script.sh'
-        exec bash "$0" "$@"
-    fi
+    case "${ZSH_EVAL_CONTEXT:-}" in
+        toplevel)
+            # Re-execute with bash if run as 'zsh script.sh'
+            exec bash "$0" "$@"
+            ;;
+        *)
+            echo "Error: This script is not meant to be sourced directly in Zsh." >&2
+            return 1
+            ;;
+    esac
 fi
 
 # ==============================================================================
@@ -51,4 +61,12 @@ fi
 export IS_MACOS_ARM
 
 set -euo pipefail
+
+# SIGPIPE ignorieren: `run --list | head` soll der Shell nicht mit einem Signal
+# abbrechen, sondern sauber beenden (der EXIT-Trap laeuft dann noch).
+# Hinweis: die Meldung "write error: Broken pipe" stammt vom Bash-Builtin
+# selbst und wird an den Ausgabestellen unterdrueckt (siehe cli_list_tasks
+# in 12-execution.sh).  Tasks bekommen die Standardbehandlung zurueck
+# (siehe 12-execution.sh).
+trap '' PIPE 2>/dev/null || true
 

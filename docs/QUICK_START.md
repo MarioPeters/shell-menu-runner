@@ -85,6 +85,21 @@ run --validate
 
 # Start a specific profile
 run dev
+
+# List all tasks and run one without the menu (works over SSH / in CI)
+run --list
+run --run "Build Project"
+run --run 3
+```
+
+### Remote / SSH
+
+```bash
+# Interactive menu over SSH (needs a TTY)
+ssh -t user@server.com "cd project && run"
+
+# Without a TTY the task list is printed and tasks run by number or name
+ssh user@server.com "cd project && run" <<< "3"
 ```
 
 ---

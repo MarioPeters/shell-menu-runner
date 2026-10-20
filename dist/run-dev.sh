@@ -1,14 +1,24 @@
 #!/bin/bash
 
 # Ensure we are running in Bash, not Zsh (if sourced or run with 'zsh script.sh')
+#
+# Zsh has no BASH_SOURCE, and $0 cannot distinguish "sourced" from "executed":
+# in both cases $0 is the path of the script itself.  $ZSH_EVAL_CONTEXT
+# (zsh >= 5.0.3) does distinguish them:
+#   toplevel            -> the script was executed  -> re-exec with bash
+#   cmdarg:file         -> the script was sourced    -> refuse
+#   cmdarg:shfunc:file -> the script was sourced    -> refuse
 if [ -n "${ZSH_VERSION:-}" ]; then
-    if [ "${BASH_SOURCE[0]}" != "$0" ]; then
-        echo "Error: This script is not meant to be sourced directly in Zsh."
-        return 1
-    else
-        # Re-execute with bash if run as 'zsh script.sh'
-        exec bash "$0" "$@"
-    fi
+    case "${ZSH_EVAL_CONTEXT:-}" in
+        toplevel)
+            # Re-execute with bash if run as 'zsh script.sh'
+            exec bash "$0" "$@"
+            ;;
+        *)
+            echo "Error: This script is not meant to be sourced directly in Zsh." >&2
+            return 1
+            ;;
+    esac
 fi
 
 # ==============================================================================
@@ -51,6 +61,14 @@ fi
 export IS_MACOS_ARM
 
 set -euo pipefail
+
+# SIGPIPE ignorieren: `run --list | head` soll der Shell nicht mit einem Signal
+# abbrechen, sondern sauber beenden (der EXIT-Trap laeuft dann noch).
+# Hinweis: die Meldung "write error: Broken pipe" stammt vom Bash-Builtin
+# selbst und wird an den Ausgabestellen unterdrueckt (siehe cli_list_tasks
+# in 12-execution.sh).  Tasks bekommen die Standardbehandlung zurueck
+# (siehe 12-execution.sh).
+trap '' PIPE 2>/dev/null || true
 
 
 # ==============================================================================
@@ -260,7 +278,8 @@ get_all_tasks() {
         [[ "$line" =~ ^THEME: ]] && continue
         [[ "$line" =~ ^TITLE: ]] && continue
 
-        IFS='|' read -r level name cmd desc <<< "$line"
+        split_task_line "$line"
+        level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
         [ -z "$name" ] && continue
         if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
             continue
@@ -300,12 +319,20 @@ get_realpath() {
     fi
 }
 cleanup_terminal() {
+    # Reset the terminal mode first: if the script dies inside the raw mode
+    # the shell would stay without echo and without line editing.
+    stty sane 2>/dev/null || true
+    # The cursor-restore sequence is terminal control output, not data: it must
+    # not end up in the stdout stream of `run --version` / `run --list`.
+    # It is only emitted when stdout is a terminal and goes to stderr, so that a
+    # piped stdout stays free of escape sequences.
+    [ -t 1 ] || return 0
     if [ -n "${TPUT_CNORM:-}" ]; then
-        echo -ne "$TPUT_CNORM"
+        echo -ne "$TPUT_CNORM" >&2
     else
-        tput cnorm 2>/dev/null || true
+        tput cnorm >&2 2>/dev/null || true
     fi
-    echo -e "${COLOR_RESET}";
+    echo -e "${COLOR_RESET}" >&2
 }
 handle_interrupt() { cleanup_terminal; clear; exit 130; }
 trap cleanup_terminal EXIT
@@ -329,14 +356,19 @@ sanitize_filename() { sed 's/ /_/g; s/[^A-Za-z0-9._-]//g' <<< "$1"; }
 
 # Kürzt eine Datei auf maximal $2 Zeilen (via tail).
 # Wird von add_to_history, add_to_recent und save_search_term genutzt.
+# Die Temp-Datei enthält die PID, damit parallele run.sh-Instanzen sich nicht
+# gegenseitig die Temp-Datei wegschnappen (Race → "mv: No such file or directory").
 trim_file_to_lines() {
     local file="$1" max="$2"
     [ -f "$file" ] || return 0
     local lines
     lines=$(wc -l < "$file" 2>/dev/null || echo 0)
     if [ "$lines" -gt "$max" ]; then
-        if tail -n "$max" "$file" > "${file}.tmp"; then
-            mv "${file}.tmp" "$file" || rm -f "${file}.tmp"
+        local tmp="${file}.tmp.$$"
+        if tail -n "$max" "$file" > "$tmp"; then
+            mv "$tmp" "$file" 2>/dev/null || rm -f "$tmp"
+        else
+            rm -f "$tmp"
         fi
     fi
 }
@@ -346,6 +378,45 @@ trim_whitespace() {
     s="${s#"${s%%[![:space:]]*}"}"
     s="${s%"${s##*[![:space:]]}"}"
     printf "%s" "$s"
+}
+
+# Splits a "level|name|command|description" line into its fields.
+#
+# A here-string (`IFS='|' read -r a b c d <<< "$line"`) creates a temporary
+# file in Bash 3.2 and costs ~130 µs per call — in the menu loops (once per
+# config line and once per visible entry) that alone dominated the redraw
+# time.  Parameter expansion needs ~10 µs and no fork.
+#
+# Result: _f_level, _f_name, _f_cmd, _f_desc
+# The last field keeps any remaining separators (same as `read`).
+_f_level=""
+_f_name=""
+_f_cmd=""
+_f_desc=""
+split_task_line() {
+    local _rest="$1"
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_level="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_level="$_rest"
+        _rest=""
+    fi
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_name="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_name="$_rest"
+        _rest=""
+    fi
+    if [ "${_rest#*|}" != "$_rest" ]; then
+        _f_cmd="${_rest%%|*}"
+        _rest="${_rest#*|}"
+    else
+        _f_cmd="$_rest"
+        _rest=""
+    fi
+    _f_desc="$_rest"
 }
 
 # Cross-platform file mtime (optimization: check method once)
@@ -405,6 +476,7 @@ validate_filename() {
 
 # Context indicator — built once at init, read by draw_menu()
 _CTX_LINE=""
+_CTX_LINE_PLAIN=""
 _CTX_BRANCH=""
 _CTX_HOST=""
 _CTX_ENV=""
@@ -416,10 +488,48 @@ _BORDER_TOP=""
 # shellcheck disable=SC2034
 _BORDER_BOT=""
 
+# Terminal capabilities — defaults for the non-interactive path (SSH without
+# -t, pipes, cron).  init_terminal_capabilities() overwrites them when a real
+# terminal is available; without these defaults the script would abort with
+# "unbound variable" as soon as set -u is active.
+HAS_TPUT=0
+TPUT_CUP=""
+TPUT_CIVIS=""
+TPUT_CNORM=""
+TPUT_ED=""
+TPUT_COLS=80
+
+# ==============================================================================
+#  TERMINAL STATE SNAPSHOT
+# ==============================================================================
+# The current terminal settings (stty -g) are captured once before the menu
+# switches to raw mode and restored after external programs (editors) have run.
+# `stty sane` would override the user's own settings and the combination
+# `stty sane; stty -echo; drain_stdin` left the shell in `-icanon` mode
+# without echo — every following `read` was blind and without line editing.
+_SAVED_STTY=""
+
+save_terminal_state() {
+    [ -n "$_SAVED_STTY" ] && return 0
+    _SAVED_STTY=$(stty -g 2>/dev/null || true)
+    return 0
+}
+
+restore_terminal_state() {
+    if [ -n "$_SAVED_STTY" ]; then
+        stty "$_SAVED_STTY" 2>/dev/null || true
+    else
+        stty sane 2>/dev/null || true
+    fi
+    return 0
+}
+
 check_interactive() {
     # Check if stdin is a TTY (interactive session)
     if [ -t 0 ]; then
         is_interactive=1
+        # Snapshot the user's terminal settings before anything changes them
+        save_terminal_state
         init_terminal_capabilities
     else
         is_interactive=0
@@ -436,14 +546,16 @@ check_ssh_session() {
 }
 
 init_context() {
-    _CTX_LINE=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
+    _CTX_LINE=""; _CTX_LINE_PLAIN=""; _CTX_BRANCH=""; _CTX_HOST=""; _CTX_ENV=""
     local show="${CONTEXT_SHOW:-git,hostname,env}"
     local parts=()
+    local plain_parts=()
 
     # Git branch — subprocess is acceptable at init (not in render loop)
     if [[ "$show" == *"git"* ]]; then
         _CTX_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
         [ -n "$_CTX_BRANCH" ] && parts+=("${COLOR_INFO}⎇ ${_CTX_BRANCH}${COLOR_RESET}")
+        [ -n "$_CTX_BRANCH" ] && plain_parts+=("⎇ ${_CTX_BRANCH}")
     fi
 
     # Hostname — only on SSH sessions
@@ -451,6 +563,7 @@ init_context() {
         if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
             _CTX_HOST="${HOSTNAME:-$(hostname 2>/dev/null || true)}"
             [ -n "$_CTX_HOST" ] && parts+=("${COLOR_ERR}⚡ ${_CTX_HOST}${COLOR_RESET}")
+            [ -n "$_CTX_HOST" ] && plain_parts+=("⚡ ${_CTX_HOST}")
         fi
     fi
 
@@ -468,17 +581,21 @@ init_context() {
                 *)               env_color="$COLOR_DIM"  ;;
             esac
             parts+=("${env_color}${env_upper}${COLOR_RESET}")
+            plain_parts+=("${env_upper}")
         fi
     fi
 
     # Join parts with " · " separator — pure Bash, no subshell
     if [ "${#parts[@]}" -gt 0 ]; then
         local line="${parts[0]}"
+        local plain="${plain_parts[0]}"
         local i
         for (( i=1; i<${#parts[@]}; i++ )); do
             line+="${COLOR_DIM} · ${COLOR_RESET}${parts[$i]}"
+            plain+=" · ${plain_parts[$i]}"
         done
         _CTX_LINE="$line"
+        _CTX_LINE_PLAIN="$plain"
     fi
 }
 
@@ -494,6 +611,251 @@ build_border_strings() {
     _BORDER_TOP="┌${dashes}┐"
     _BORDER_BOT="└${dashes}┘"
     _LAST_COL_WIDTH="$col_width"
+}
+
+# ==============================================================================
+#  UTF-8 DISPLAY WIDTH
+# ==============================================================================
+# Terminals count columns, not bytes or characters: CJK glyphs and emoji occupy
+# two columns, combining marks none.  The helpers below decode UTF-8 byte-wise
+# (locale independent, Bash 3.2 compatible) and return the real column count.
+# Without this the menu boxes wrap or misalign as soon as a task name contains
+# non-ASCII text.
+
+# Decoder state — shared via globals (Bash 3.2 has no namerefs).
+_U8_STR=""
+_U8_POS=0
+_U8_CP=0
+_U8_LEN=0
+_U8_WIDTH=0
+
+# Result variables of the public helpers
+DISPLAY_WIDTH=0
+FIT_TEXT=""
+
+# Sets _U8_WIDTH to the number of terminal columns used by a code point.
+_u8_width() {
+    local _cp="$1"
+    _U8_WIDTH=1
+
+    # ── Zero width: control characters and combining marks ─────────
+    if [ "$_cp" -lt 32 ] \
+       || { [ "$_cp" -ge 127 ] && [ "$_cp" -lt 160 ]; } \
+       || { [ "$_cp" -ge 768 ] && [ "$_cp" -le 879 ]; } \
+       || { [ "$_cp" -ge 1425 ] && [ "$_cp" -le 1479 ]; } \
+       || { [ "$_cp" -ge 1536 ] && [ "$_cp" -le 1791 ]; } \
+       || { [ "$_cp" -ge 1872 ] && [ "$_cp" -le 1919 ]; } \
+       || { [ "$_cp" -ge 8202 ] && [ "$_cp" -le 8207 ]; } \
+       || { [ "$_cp" -ge 8208 ] && [ "$_cp" -le 8231 ]; } \
+       || { [ "$_cp" -ge 8240 ] && [ "$_cp" -le 8247 ]; } \
+       || { [ "$_cp" -ge 8288 ] && [ "$_cp" -le 8299 ]; } \
+       || { [ "$_cp" -ge 8400 ] && [ "$_cp" -le 8432 ]; } \
+       || { [ "$_cp" -ge 8450 ] && [ "$_cp" -le 8531 ]; } \
+       || { [ "$_cp" -ge 65024 ] && [ "$_cp" -le 65039 ]; } \
+       || [ "$_cp" -eq 65279 ]; then
+        _U8_WIDTH=0
+        return 0
+    fi
+
+    # ── Wide: CJK, fullwidth forms and emoji ──────────────────────
+    if { [ "$_cp" -ge 4352 ] && [ "$_cp" -le 4447 ]; } \
+       || { [ "$_cp" -ge 11904 ] && [ "$_cp" -le 12350 ]; } \
+       || { [ "$_cp" -ge 12352 ] && [ "$_cp" -le 13311 ]; } \
+       || { [ "$_cp" -ge 13312 ] && [ "$_cp" -le 19903 ]; } \
+       || { [ "$_cp" -ge 19968 ] && [ "$_cp" -le 40959 ]; } \
+       || { [ "$_cp" -ge 40960 ] && [ "$_cp" -le 42191 ]; } \
+       || { [ "$_cp" -ge 43360 ] && [ "$_cp" -le 43455 ]; } \
+       || { [ "$_cp" -ge 44032 ] && [ "$_cp" -le 55203 ]; } \
+       || { [ "$_cp" -ge 63744 ] && [ "$_cp" -le 64255 ]; } \
+       || { [ "$_cp" -ge 65008 ] && [ "$_cp" -le 65023 ]; } \
+       || { [ "$_cp" -ge 65040 ] && [ "$_cp" -le 65135 ]; } \
+       || { [ "$_cp" -ge 65280 ] && [ "$_cp" -le 65376 ]; } \
+       || { [ "$_cp" -ge 65504 ] && [ "$_cp" -le 65510 ]; } \
+       || { [ "$_cp" -ge 127744 ] && [ "$_cp" -le 128591 ]; } \
+       || { [ "$_cp" -ge 128640 ] && [ "$_cp" -le 128711 ]; } \
+       || { [ "$_cp" -ge 128768 ] && [ "$_cp" -le 130303 ]; } \
+       || { [ "$_cp" -ge 128992 ] && [ "$_cp" -le 129003 ]; } \
+       || { [ "$_cp" -ge 131072 ] && [ "$_cp" -le 262143 ]; }; then
+        _U8_WIDTH=2
+        return 0
+    fi
+
+    return 0
+}
+
+# Decodes the UTF-8 sequence at byte position _U8_POS of _U8_STR.
+# Result: _U8_CP (code point), _U8_LEN (bytes), _U8_WIDTH (columns).
+_u8_decode() {
+    local _b1 _b2 _b3 _b4 _v _rest
+
+    printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+    _b1=$_v
+    [ "$_b1" -lt 0 ] && _b1=$(( _b1 + 256 ))
+
+    if [ "$_b1" -lt 128 ]; then
+        _U8_CP=$_b1
+        _U8_LEN=1
+    elif [ "$_b1" -lt 224 ]; then
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 2 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_CP=$(( ((_b1 & 31) << 6) | (_b2 & 63) ))
+        _U8_LEN=2
+    elif [ "$_b1" -lt 240 ]; then
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 3 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b3=$_v; [ "$_b3" -lt 0 ] && _b3=$(( _b3 + 256 ))
+        _U8_CP=$(( ((_b1 & 15) << 12) | ((_b2 & 63) << 6) | (_b3 & 63) ))
+        _U8_LEN=3
+    else
+        _rest=$(( ${#_U8_STR} - _U8_POS ))
+        if [ "$_rest" -lt 4 ]; then _U8_CP=$_b1; _U8_LEN=1; _u8_width "$_U8_CP"; return 0; fi
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b2=$_v; [ "$_b2" -lt 0 ] && _b2=$(( _b2 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b3=$_v; [ "$_b3" -lt 0 ] && _b3=$(( _b3 + 256 ))
+        _U8_POS=$(( _U8_POS + 1 ))
+        printf -v _v '%d' "'${_U8_STR:_U8_POS:1}"
+        _b4=$_v; [ "$_b4" -lt 0 ] && _b4=$(( _b4 + 256 ))
+        _U8_CP=$(( ((_b1 & 7) << 18) | ((_b2 & 63) << 12) | ((_b3 & 63) << 6) | (_b4 & 63) ))
+        _U8_LEN=4
+    fi
+
+    _u8_width "$_U8_CP"
+    return 0
+}
+
+# Sets DISPLAY_WIDTH to the number of terminal columns of the given string.
+display_width() {
+    local _s="$1"
+    local _w=0 _i=0 _len _lc_saved="" _lc_was_set=0
+
+    # Fast path: pure ASCII → one column per character
+    case "$_s" in
+        *[![:ascii:]]*) ;;
+        *) DISPLAY_WIDTH=${#_s}; return 0 ;;
+    esac
+
+    # Byte-wise decoding: LC_ALL=C makes ${#str} and ${str:i:n} byte based
+    [ -n "${LC_ALL+x}" ] && { _lc_was_set=1; _lc_saved="$LC_ALL"; }
+    LC_ALL=C
+
+    _U8_STR="$_s"
+    _len=${#_U8_STR}
+    while [ "$_i" -lt "$_len" ]; do
+        _U8_POS=$_i
+        _u8_decode
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+
+    DISPLAY_WIDTH=$_w
+    return 0
+}
+
+# Pads or truncates a string to exactly the given number of terminal columns.
+# Result: FIT_TEXT.  Truncation never splits a UTF-8 character and appends
+# an ellipsis so the column width stays stable.
+fit_to_width() {
+    local _s="$1" _max="$2"
+    local _w=0 _i=0 _len _out="" _truncated=0 _limit _pad _spaces="" _lc_saved="" _lc_was_set=0
+
+    FIT_TEXT=""
+    [ "$_max" -lt 1 ] && return 0
+
+    # Fast path: pure ASCII
+    case "$_s" in
+        *[![:ascii:]]*) ;;
+        *)
+            if [ "${#_s}" -le "$_max" ]; then
+                printf -v _spaces '%*s' "$(( _max - ${#_s} ))" ''
+                FIT_TEXT="${_s}${_spaces}"
+            else
+                printf -v FIT_TEXT '%s...' "${_s:0:$(( _max > 3 ? _max - 3 : 1 ))}"
+            fi
+            return 0
+            ;;
+    esac
+
+    # Byte-wise decoding: LC_ALL=C makes ${#str} and ${str:i:n} byte based
+    [ -n "${LC_ALL+x}" ] && { _lc_was_set=1; _lc_saved="$LC_ALL"; }
+    LC_ALL=C
+
+    _U8_STR="$_s"
+    _len=${#_U8_STR}
+
+    # First pass: does the text fit?
+    while [ "$_i" -lt "$_len" ]; do
+        _U8_POS=$_i
+        _u8_decode
+        if [ $(( _w + _U8_WIDTH )) -gt "$_max" ]; then
+            _truncated=1
+            break
+        fi
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    if [ "$_truncated" -eq 0 ]; then
+        _pad=$(( _max - _w ))
+        [ "$_pad" -gt 0 ] && printf -v _spaces '%*s' "$_pad" ''
+        if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+        FIT_TEXT="${_s}${_spaces}"
+        return 0
+    fi
+
+    # Second pass: cut at the column limit, reserve 3 columns for the ellipsis
+    _limit=$(( _max - 3 ))
+    [ "$_limit" -lt 1 ] && _limit=1
+    _w=0
+    _i=0
+    _out=""
+    while [ "$_i" -lt "$_len" ]; do
+        local _start=$_i
+        _U8_POS=$_i
+        _u8_decode
+        if [ $(( _w + _U8_WIDTH )) -gt "$_limit" ]; then
+            break
+        fi
+        # _U8_POS was advanced by the decoder — cut at the original offset
+        _out="${_out}${_U8_STR:_start:_U8_LEN}"
+        _w=$(( _w + _U8_WIDTH ))
+        _i=$(( _i + _U8_LEN ))
+    done
+
+    _out="${_out}..."
+    _w=$(( _w + 3 ))
+    _pad=$(( _max - _w ))
+    [ "$_pad" -gt 0 ] && printf -v _spaces '%*s' "$_pad" ''
+    if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
+    FIT_TEXT="${_out}${_spaces}"
+    return 0
+}
+
+# Horizontal rule that always fits into the current terminal width.
+# Usage: separator_line [max_width]
+separator_line() {
+    local _max="${1:-63}"
+    local _width="${TPUT_COLS:-80}"
+    local _len _i _out=""
+
+    [ "$_width" -gt "$_max" ] && _width=$_max
+    [ "$_width" -lt 10 ] && _width=10
+
+    # ── characters ────────────────────────────────────────────────
+    for (( _i=0; _i<_width; _i++ )); do _out+='─'; done
+    printf "%s" "$_out"
 }
 
 # Optimized terminal capability caching
@@ -524,13 +886,15 @@ init_terminal_capabilities() {
 consume_keypress() {
     # Suppress echo so arrow keys / escape sequences are not printed to the
     # terminal while waiting for the keypress (e.g. after stty sane in execute_task).
-    stty -echo 2>/dev/null
-    read_key >/dev/null
+    # Every stty call tolerates a missing TTY — otherwise `set -e` would abort
+    # the script in a pipe/SSH-without-TTY session.
+    stty -echo 2>/dev/null || true
+    read_key >/dev/null || true
     # Drain any remaining bytes from multi-byte escape sequences (e.g. arrow keys
     # send \x1b[A; read_key already consumed the full sequence, but defensive
     # drain prevents leftover bytes leaking into the main loop's key handler).
     drain_stdin
-    stty echo 2>/dev/null
+    stty echo 2>/dev/null || true
 }
 
 # Enable raw interactive input mode for the main loop.
@@ -539,22 +903,60 @@ consume_keypress() {
 # to "". Spurious "" from a failed read_key_raw is blocked by the _rk_status
 # guard in the main loop (13-ui.sh), not by changing icrnl.
 set_raw_mode() {
-    stty -echo -icanon time 0 min 1 isig 2>/dev/null
+    stty -echo -icanon time 0 min 1 isig 2>/dev/null || true
 }
 
 drain_stdin() {
+    # Only a terminal can have buffered bytes — on a pipe dd would block until
+    # the writer closes the pipe (hang).
+    [ -t 0 ] || return 0
     # Non-blocking drain of any pending stdin bytes (e.g. escape sequence tails
     # or task output left in the buffer). Explicitly disables icanon so this
     # works regardless of the current terminal mode (e.g. after stty sane).
     # Uses bs=128 to empty buffers with fewer fork iterations.
     # Restores blocking raw mode (min 1) afterwards.
-    stty -icanon min 0 time 0 2>/dev/null
+    stty -icanon min 0 time 0 2>/dev/null || true
     local _d
     while true; do
         _d=$(dd bs=128 count=1 2>/dev/null)
         [ -z "$_d" ] && break
     done
-    stty min 1 time 0 2>/dev/null
+    stty min 1 time 0 2>/dev/null || true
+}
+
+# Re-installs the Ctrl+C handler that fits the current context: the menu loop
+# needs the terminal restore, every other code path does not.
+restore_int_trap() {
+    if [ "${_MENU_LOOP_ACTIVE:-0}" -eq 1 ]; then
+        trap 'restore_term; cleanup_wrapper; exit 130' INT TERM
+    else
+        trap 'cleanup_wrapper; exit 130' INT TERM
+    fi
+    return 0
+}
+
+# Runs an external editor on the given file and restores the terminal state.
+#
+# * `trap ':' INT` (handler, not ignore): bash resets a *trapped* signal to its
+#   default disposition in the child process, so Ctrl+C terminates the editor
+#   while the menu survives.  `trap '' INT` would be inherited by the child and
+#   the editor could never be stopped.
+# * The terminal settings are restored from the snapshot instead of
+#   `stty sane; stty -echo` — that left the shell in `-icanon` mode without
+#   echo, so the following `read` calls were blind.
+run_external_editor() {
+    local file="${1:-}"
+    if [ -z "$file" ]; then
+        error "No file to edit"
+        return 0
+    fi
+
+    trap ':' INT
+    ${EDITOR:-nano} "$file" || true
+    restore_int_trap
+    drain_stdin
+    restore_terminal_state
+    return 0
 }
 
 read_key() {
@@ -569,11 +971,13 @@ read_key() {
         # Use ONE dd call (bs=10) instead of a loop of bs=1 forks: fewer subshells,
         # no race between fork overhead and byte delivery.
         local previous_stty
-        previous_stty=$(stty -g)
-        stty -icanon min 0 time 1 2>/dev/null
+        previous_stty=$(stty -g 2>/dev/null || true)
+        stty -icanon min 0 time 1 2>/dev/null || true
         local seq
         seq=$(dd bs=10 count=1 2>/dev/null)
-        stty "$previous_stty" 2>/dev/null
+        if [ -n "$previous_stty" ]; then
+            stty "$previous_stty" 2>/dev/null || true
+        fi
         key="${key}${seq}"
     fi
     printf "%s" "$key"
@@ -594,10 +998,10 @@ read_key_raw() {
         # waits at most 100ms if nothing arrives (pure ESC press).
         # One fork instead of 5 serial forks avoids the race condition where
         # fork overhead (~5-20ms) caused [A to be missed at time 0.
-        stty min 0 time 1 2>/dev/null
+        stty min 0 time 1 2>/dev/null || true
         local seq
         seq=$(dd bs=10 count=1 2>/dev/null)
-        stty min 1 time 0 2>/dev/null
+        stty min 1 time 0 2>/dev/null || true
         key="${key}${seq}"
     fi
     printf "%s" "$key"
@@ -850,6 +1254,18 @@ render_status_bar() {
 readonly CACHE_DIR="/tmp/.run_cache_$$"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
+# Persistent cache directory — survives between runs.
+# CACHE_DIR above is removed by the EXIT trap, so anything stored there would
+# never be reused: the profile list cache (60s TTL) and the selected-index
+# state need a directory that outlives the process.
+RUN_CACHE_DIR="${RUN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/shell-menu-runner}"
+if ! mkdir -p "$RUN_CACHE_DIR" 2>/dev/null; then
+    # Fallback: no writable persistent location -> cache never hits, but the
+    # script keeps working.
+    RUN_CACHE_DIR="$CACHE_DIR"
+fi
+readonly RUN_CACHE_DIR
+
 # Memoization: Hash wird nur neu berechnet, wenn config_path wechselt
 _cache_file_last_path=""
 _cache_file_last_result=""
@@ -871,14 +1287,18 @@ get_cache_file() {
         config_hash="default"
     fi
     _cache_file_last_path="$config_path"
-    _cache_file_last_result="$CACHE_DIR/state_${config_hash}"
+    _cache_file_last_result="$RUN_CACHE_DIR/state_${config_hash}"
     echo "$_cache_file_last_result"
 }
 
 get_profile_cache_file() {
-    echo "$CACHE_DIR/profiles_cache"
+    echo "$RUN_CACHE_DIR/profiles_cache"
 }
 
+# Caches the profile list for 60 seconds in the persistent cache directory.
+# NOTE: not wired into the UI paths on purpose — a 60 s TTL would hide a
+# freshly created .tasks.<profile> from the profile menu, and the listing
+# itself is only a handful of stat calls.
 cache_profiles() {
     local cache_file
     cache_file=$(get_profile_cache_file)
@@ -904,14 +1324,14 @@ cache_profiles() {
 }
 
 clear_cache() {
-    rm -rf "$CACHE_DIR" 2>/dev/null || true
-    mkdir -p "$CACHE_DIR" 2>/dev/null || true
+    rm -rf "$RUN_CACHE_DIR" 2>/dev/null || true
+    mkdir -p "$RUN_CACHE_DIR" 2>/dev/null || true
 }
 
 save_state() {
     local cf
     cf=$(get_cache_file)
-    # Bash string-op instead of $(dirname) subshell: cf is always $CACHE_DIR/state_HASH
+    # Bash string-op instead of $(dirname) subshell: cf is always $RUN_CACHE_DIR/state_HASH
     mkdir -p "${cf%/*}" 2>/dev/null || true
     if ! echo "$selected_index" > "$cf" 2>/dev/null; then
         echo "WARN: failed to save state to $cf" >&2
@@ -928,6 +1348,8 @@ load_state() {
 }
 
 # Cleanup cache on exit
+# Only the per-run scratch space (CACHE_DIR) is removed — the persistent cache
+# (RUN_CACHE_DIR) must survive so that the profile/state cache can be reused.
 cleanup_wrapper() {
     rm -rf "$CACHE_DIR" 2>/dev/null
     if command -v cleanup_terminal >/dev/null 2>&1; then
@@ -942,36 +1364,30 @@ trap 'cleanup_wrapper; exit 130' INT TERM
 # ==============================================================================
 
 find_local_config() {
-    set +e
     local d="$PWD"
     while [ "$d" != "/" ]; do
         if [ -f "$d/$LOCAL_CONFIG" ]; then
             echo "$d/$LOCAL_CONFIG"
-            set -e
             return 0
         fi
         # Bash-String-Op statt dirname-Subshell
         d="${d%/*}"
         [ -z "$d" ] && d="/"
     done
-    set -e
     return 1
 }
 
 find_named_config() {
     local name="$1"
-    set +e
     local d="$PWD"
     while [ "$d" != "/" ]; do
         if [ -f "$d/.tasks.$name" ]; then
             echo "$d/.tasks.$name"
-            set -e
             return 0
         fi
         d="${d%/*}"
         [ -z "$d" ] && d="/"
     done
-    set -e
     return 1
 }
 
@@ -1004,20 +1420,29 @@ list_available_profiles() {
 init_profile() {
     local name="$1"
     [ -z "$name" ] && { echo "Error: profile name required"; return 1; }
-    
+    # Der Name landet im Dateinamen — Pfad-Traversal und Leerzeichen sind nicht
+    # erlaubt (Format des Alias-Dateiformats "name=value" bzw. ".tasks.<name>").
+    case "$name" in
+        */*|*" "*) echo "Error: invalid profile name (no '/' or spaces)"; return 1 ;;
+    esac
+
     local profile_file="$PWD/.tasks.$name"
     [ -f "$profile_file" ] && { echo "Profile $name already exists at $profile_file"; return 1; }
-    
+
     echo "Creating profile: $name"
-    cat > "$profile_file" << 'EOF'
+    local template
+    template="$(cat << 'EOF'
 # Profile: {NAME}
 # Auto-generated task list for {NAME}
 
 0|Task Name|command|Description here
 0|Another Task|echo "Hello"|Runs a simple command
 EOF
-    
-    sed -i '' "s/{NAME}/$name/g" "$profile_file" 2>/dev/null || sed -i "s/{NAME}/$name/g" "$profile_file"
+)"
+    # Bash-String-Op statt sed -i (kein Fork, kein Escaping-Problem)
+    template=${template//\{NAME\}/$name}
+    printf '%s\n' "$template" > "$profile_file"
+
     echo "Profile created: $profile_file"
     echo "Edit with: ${EDITOR:-nano} $profile_file"
 }
@@ -1074,11 +1499,12 @@ list_profiles_all() {
         echo "{"
         echo "  \"profiles\": ["
         local first=1
+        # Process-Substitution statt Here-String (kein temporäres File)
         while IFS= read -r prof; do
             [ "$first" -eq 0 ] && echo ","
             first=0
             echo "    { \"name\": \"$prof\" }"
-        done <<< "$profiles_str"
+        done < <(printf '%s\n' "$profiles_str")
         echo ""
         echo "  ]"
         echo "}"
@@ -1087,7 +1513,7 @@ list_profiles_all() {
         echo ""
         while IFS= read -r prof; do
             echo "  • $prof"
-        done <<< "$profiles_str"
+        done < <(printf '%s\n' "$profiles_str")
     fi
 }
 
@@ -1163,7 +1589,7 @@ select_profile_menu() {
         if [ "$filter_active" -eq 1 ]; then
             echo -e "${COLOR_INFO}Filter: ${filter_pattern}_${COLOR_RESET} (ESC to clear)"
         fi
-        echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+        echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
         
         local start=$((page * per_page))
         local end=$((start + per_page))
@@ -1253,8 +1679,11 @@ save_search_term() {
 
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
-        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "${SEARCH_HISTORY_FILE}.tmp" 2>/dev/null || true
-        mv "${SEARCH_HISTORY_FILE}.tmp" "$SEARCH_HISTORY_FILE" || true
+        # PID im Temp-Namen: parallele run.sh-Instanzen dürfen sich nicht
+        # gegenseitig die Temp-Datei wegschnappen.
+        local tmp="${SEARCH_HISTORY_FILE}.tmp.$$"
+        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "$tmp" 2>/dev/null || true
+        mv "$tmp" "$SEARCH_HISTORY_FILE" 2>/dev/null || rm -f "$tmp"
     fi
 
     echo "$term" >> "$SEARCH_HISTORY_FILE"
@@ -1283,7 +1712,7 @@ interactive_search() {
     if [ ${#history_items[@]} -gt 0 ]; then
         echo -e "${COLOR_DIM}Recent: ${history_items[0]}${COLOR_RESET}"
     fi
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo -n "Search: "
 
     while true; do
@@ -1344,18 +1773,25 @@ interactive_search() {
 #  TAG SYSTEM
 # ==============================================================================
 
+# Extracts all #tags from a description.
+# Result: EXTRACTED_TAG_LIST (array).
+#
+# An array instead of a space separated string: the string variant needed word
+# splitting, and word splitting depends on the current IFS — a prefix
+# assignment like `IFS=$'\n' read ... < <(get_all_tags)` leaks into the
+# process substitution subshell and turned all tags into a single one.
+EXTRACTED_TAG_LIST=()
 extract_tags() {
     local desc="$1"
-    local result=""
+    EXTRACTED_TAG_LIST=()
     # Bash-Regex statt echo|grep|tr (3 externe Prozesse gespart)
     local rest="$desc"
     while [[ "$rest" =~ (#[a-zA-Z0-9_-]+) ]]; do
         local _tag="${BASH_REMATCH[1]}"
-        result+="$_tag "
+        EXTRACTED_TAG_LIST+=("$_tag")
         # SC2295: BASH_REMATCH in ${#} als Pattern muss über Variable referenziert werden
         rest="${rest#*"$_tag"}"
     done
-    printf '%s' "$result"
 }
 
 has_tag() {
@@ -1366,13 +1802,21 @@ has_tag() {
 
 get_all_tags() {
     local -a tags=()
+    local tag _tag_line
+    # Default-IFS hart setzen: die Funktion läuft in einem
+    # Process-Substitution-Subshell, in den der IFS des Aufrufers leakt.
+    local IFS=$' \t\n'
     # Process-Substitution: kein all_output-String im Speicher
-    while IFS='|' read -r level name cmd desc; do
-        local task_tags
-        task_tags=$(extract_tags "$desc")
-        for tag in $task_tags; do
-            tags+=("$tag")
-        done
+    # `|| [ -n "$_tag_line" ]` → die letzte Zeile ohne Newline wird mit gelesen
+    while read -r _tag_line || [ -n "$_tag_line" ]; do
+        split_task_line "$_tag_line"
+        extract_tags "$_f_desc"
+        # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+        if [ ${#EXTRACTED_TAG_LIST[@]} -gt 0 ]; then
+            for tag in "${EXTRACTED_TAG_LIST[@]}"; do
+                tags+=("$tag")
+            done
+        fi
     done < <(
         if [ "${#task_config_files[@]}" -gt 0 ]; then
             cat "${task_config_files[@]}" 2>/dev/null || true
@@ -1380,7 +1824,8 @@ get_all_tags() {
             cat "$config_path"
         fi
     )
-    # Unique sort
+    # Unique sort — leeres Array würde in Bash 3.2 "unbound variable" werfen
+    [ ${#tags[@]} -eq 0 ] && return 0
     printf "%s\n" "${tags[@]}" | sort -u
 }
 
@@ -1397,9 +1842,10 @@ show_tag_menu() {
     
     clear
     echo -e "${COLOR_HEAD}🏷  Filter by Tag${COLOR_RESET}"
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     
     echo "0) ${COLOR_SEL}[All Tasks]${COLOR_RESET}"
+    local i
     for (( i=0; i<num_tags; i++ )); do
         if [ "$tag_filter" == "${all_tags[$i]}" ]; then
             printf "%d) ${COLOR_SEL}✓ %s${COLOR_RESET}\n" "$((i+1))" "${all_tags[$i]}"
@@ -1408,7 +1854,7 @@ show_tag_menu() {
         fi
     done
     
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo "[1-9] Filter [q]uit"
     
     while true; do
@@ -1455,8 +1901,13 @@ is_favorite() {
 toggle_favorite() {
     local task_name="$1"
     if is_favorite "$task_name"; then
-        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "${RUN_FAVORITES_FILE}.tmp"; then
-            mv "${RUN_FAVORITES_FILE}.tmp" "$RUN_FAVORITES_FILE"
+        # PID im Temp-Namen: parallele run.sh-Instanzen dürfen sich nicht
+        # gegenseitig die Temp-Datei wegschnappen.
+        local tmp="${RUN_FAVORITES_FILE}.tmp.$$"
+        if _grep -vxF "$task_name" "$RUN_FAVORITES_FILE" > "$tmp"; then
+            mv "$tmp" "$RUN_FAVORITES_FILE" 2>/dev/null || rm -f "$tmp"
+        else
+            rm -f "$tmp"
         fi
         echo -e "${COLOR_INFO}⭐ Removed from favorites${COLOR_RESET}"
     else
@@ -1481,7 +1932,7 @@ show_favorites() {
     if [ "${#fav_list[@]}" -eq 0 ]; then
         echo -e "${COLOR_DIM}No favorites yet. Press [*] on a task to add it!${COLOR_RESET}"
     else
-        echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+        echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
         local idx=1
         for _fav in "${fav_list[@]}"; do
             if [ "$idx" -le 9 ]; then
@@ -1492,7 +1943,7 @@ show_favorites() {
             idx=$((idx + 1))
         done
     fi
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
 
     while true; do
@@ -1549,18 +2000,18 @@ show_history() {
     if [ ! -f "$RUN_HISTORY_FILE" ] || [ ! -s "$RUN_HISTORY_FILE" ]; then
         echo -e "${COLOR_DIM}$(msg history_empty)${COLOR_RESET}"
     else
-        local lastlines
-        lastlines=$(tail -20 "$RUN_HISTORY_FILE")
+        local line _s
+        # Process-Substitution statt Here-String (kein temporäres File)
         while IFS= read -r line; do
             # Bash-String-Op statt echo|cut|xargs (2 externe Prozesse gespart)
-            local _s="${line#*| }"
+            _s="${line#*| }"
             _s="${_s%% |*}"
             if [ "$_s" = "✔" ]; then
                 echo -e "${COLOR_SEL}$line${COLOR_RESET}"
             else
                 echo -e "${COLOR_ERR}$line${COLOR_RESET}"
             fi
-        done <<< "$lastlines"
+        done < <(tail -20 "$RUN_HISTORY_FILE" 2>/dev/null)
     fi
     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
     consume_keypress
@@ -1582,51 +2033,62 @@ add_to_recent() {
 show_recent() {
     clear
     echo -e "${COLOR_HEAD}$(msg recent_tasks)${COLOR_RESET}"
-    
+
     if [ ! -f "$RUN_RECENT_FILE" ] || [ ! -s "$RUN_RECENT_FILE" ]; then
         echo -e "${COLOR_DIM}No recent tasks yet.${COLOR_RESET}"
         echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
         consume_keypress
         return
     fi
-    
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     local -a lines=()
     IFS=$'\n' read -r -d '' -a lines < <(tail -n 20 "$RUN_RECENT_FILE" 2>/dev/null && printf '\0') || true
-    
+
+    # Leeres Array → "${lines[@]}" würde in Bash 3.2 mit set -u abbrechen
+    if [ ${#lines[@]} -eq 0 ]; then
+        echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
+        consume_keypress
+        return
+    fi
+
     local idx=1
+    local line _path _name _rest
     for line in "${lines[@]}"; do
-        IFS='|' read -r _ path name rest <<< "$line"
+        # Split "timestamp|config_path|task_name|exec_time" ohne Here-String
+        _rest="${line#*|}"
+        _path="${_rest%%|*}"
+        _rest="${_rest#*|}"
+        _name="${_rest%%|*}"
         # ${##*/} statt basename-Subshell
-        local short_path="${path##*/}"
-        [ "$idx" -le 9 ] && printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$name" "$short_path" || printf "  ${COLOR_DIM}%s (%s)${COLOR_RESET}\n" "$name" "$short_path"
+        local short_path="${_path##*/}"
+        [ "$idx" -le 9 ] && printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$_name" "$short_path" || printf "  ${COLOR_DIM}%s (%s)${COLOR_RESET}\n" "$_name" "$short_path"
         idx=$((idx + 1))
     done
-    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
     echo -e "\n[1-9] Execute [q]uit"
-    
+
     while true; do
         key=$(read_key) || break
         if [[ "$key" =~ [1-9] ]]; then
             local sel=$((key - 1))
-            local entry="${lines[$sel]}"
+            # ":-" verhindert "unbound variable" bei einem Index außerhalb der Liste
+            local entry="${lines[$sel]:-}"
             if [ -n "$entry" ]; then
-                IFS='|' read -r _ path name rest <<< "$entry"
-                if [ -f "$path" ]; then
-                    local prev_config="$config_path"
-                    local prev_mode="$active_mode"
-                    config_path="$path"
-                    if find_task_in_menu "$name" "_execute_recent_callback"; then
+                _rest="${entry#*|}"
+                _path="${_rest%%|*}"
+                _rest="${_rest#*|}"
+                _name="${_rest%%|*}"
+                if [ -f "$_path" ]; then
+                    if _run_recent_task "$_path" "$_name"; then
                         clear
                         return 0
                     else
-                        echo -e "${COLOR_ERR}Task not found: $name${COLOR_RESET}"
+                        echo -e "${COLOR_ERR}Task not found: $_name${COLOR_RESET}"
                         sleep 1
                     fi
-                    config_path="$prev_config"
-                    active_mode="$prev_mode"
                 else
-                    echo -e "${COLOR_ERR}Profile not found: $path${COLOR_RESET}"
+                    echo -e "${COLOR_ERR}Profile not found: $_path${COLOR_RESET}"
                     sleep 1
                 fi
             fi
@@ -1635,6 +2097,34 @@ show_recent() {
         fi
     done
     clear
+}
+
+# Führt einen zuletzt gelaufenen Task aus: Config auf das Config des Tasks
+# umstellen, den Task suchen und danach den alten Zustand wiederherstellen.
+_run_recent_task() {
+    local path="$1"
+    local name="$2"
+    local prev_config="$config_path"
+    local prev_mode="$active_mode"
+
+    config_path="$path"
+    case "$path" in
+        "$HOME"/*) active_mode="global" ;;
+        *)         active_mode="local"  ;;
+    esac
+    # Die Taskliste kommt aus task_config_files — sie muss für das Config des
+    # letzten Tasks neu aufgebaut werden, sonst wird der falsche Task gefunden.
+    detect_config_files
+
+    local found=1
+    find_task_in_menu "$name" "_execute_recent_callback" || found=0
+
+    # Zustand immer zurücksetzen (auch nach erfolgreicher Ausführung)
+    config_path="$prev_config"
+    active_mode="$prev_mode"
+    detect_config_files
+
+    [ "$found" -eq 1 ]
 }
 
 _execute_recent_callback() {
@@ -1651,12 +2141,15 @@ show_logs() {
     echo ""
     
     local -a log_files=()
+    # Die Log-Dateien beginnen mit dem Zeitstempel (create_log_file) — die
+    # Sortierung nach Name ist damit chrono-logisch (neueste zuerst).
     IFS=$'\n' read -r -d '' -a log_files < <(find "$RUN_LOG_DIR" -type f -name "*.log" 2>/dev/null | sort -r | head -9 && printf '\0') || true
-    
+
     if [ ${#log_files[@]} -eq 0 ]; then
         echo -e "${COLOR_DIM}No log files found.${COLOR_RESET}"
     else
         local idx=1
+        local log_file
         for log_file in "${log_files[@]}"; do
             # ${##*/} statt basename-Subshell
             echo "$idx) ${log_file##*/}"
@@ -1672,9 +2165,9 @@ show_logs() {
                 if [ "$sel" -lt "${#log_files[@]}" ]; then
                     clear
                     echo -e "${COLOR_HEAD}Log: ${log_files[$sel]##*/}${COLOR_RESET}"
-                    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                     cat "${log_files[$sel]}"
-                    echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                     echo -e "\n${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
                     consume_keypress
                     return
@@ -1766,7 +2259,9 @@ execute_task_deps() {
             # Find and execute the dependency task using helper
             if ! find_task_in_menu "$dep" '_execute_dep_callback'; then
                 echo -e "${COLOR_ERR}❌ Dependency '$dep' not found in:${COLOR_RESET}"
-                for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+                if [ ${#task_config_files[@]} -gt 0 ]; then
+                    for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+                fi
                 return 1
             fi
         done
@@ -1917,7 +2412,7 @@ analyze_project() {
     )
 
     echo -e "\n${COLOR_SEL}📊 Project Analysis${COLOR_RESET}"
-    echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
     # 1. Basic Stats
     echo -e "${COLOR_INFO}📈 Statistics:${COLOR_RESET}"
@@ -2001,7 +2496,7 @@ analyze_project() {
     echo -e "  • Validate: ${COLOR_DIM}run --validate${COLOR_RESET}  (check syntax)"
     echo -e "  • Documentation: ${COLOR_DIM}docs/ADVANCED_USAGE.md${COLOR_RESET}  (learn patterns)"
 
-    echo -e "${COLOR_DIM}─────────────────────────────────────────────────────────────${COLOR_RESET}\n"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}\n"
 
     return 0
 }
@@ -2015,14 +2510,16 @@ find_task_in_menu() {
     # Task format: level|name|cmd|desc — skip level field with _level.
     local search_name="$1"
     local callback="$2"
-    local -a opts
+    local -a opts=()
     IFS=$'\n' read -d '' -r -a opts < <(get_all_tasks) || true
+    # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+    [ ${#opts[@]} -eq 0 ] && return 1
 
     for opt in "${opts[@]}"; do
-        IFS='|' read -r _level opt_name opt_cmd opt_desc <<< "$opt"
-        if [ "$opt_name" = "$search_name" ]; then
+        split_task_line "$opt"
+        if [ "$_f_name" = "$search_name" ]; then
             # Direkter Funktionsaufruf statt eval: schneller und sicherer
-            "$callback" "$opt_name" "$opt_cmd" "$opt_desc"
+            "$callback" "$_f_name" "$_f_cmd" "$_f_desc"
             return 0
         fi
     done
@@ -2036,7 +2533,7 @@ preview_task() {
 
     clear
     echo -e "${COLOR_HEAD}Preview: $name${COLOR_RESET}"
-    echo -e "${COLOR_DIM}──────────────────────────────────────────────────────────────${COLOR_RESET}"
+    echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
     echo -e "${COLOR_INFO}Description:${COLOR_RESET}"
     echo -e "  $desc\n"
@@ -2075,37 +2572,70 @@ preview_task() {
 #  TASK EXECUTION ENGINE
 # ==============================================================================
 
+# Lets the user pick one of several values for a task parameter.
+#
+# The caller captures the result with `r=$(select_dropdown ...)`, so the
+# selection goes to stdout while the whole UI goes to stderr — otherwise the
+# option list would end up inside the variable and the picked value would be
+# lost.
 select_dropdown() {
     local options_str="$1"
     local -a options=()
     # IFS-Split statt printf|tr-Pipeline: kein Fork, Bash 3.2-kompatibel
-    local -a _raw_opts
+    local -a _raw_opts=()
     IFS=',' read -r -a _raw_opts <<< "$options_str"
     local _opt
-    for _opt in "${_raw_opts[@]}"; do
-        [ -n "$_opt" ] && options+=("$_opt")
-    done
+    # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+    if [ ${#_raw_opts[@]} -gt 0 ]; then
+        for _opt in "${_raw_opts[@]}"; do
+            [ -n "$_opt" ] && options+=("$_opt")
+        done
+    fi
     local selected=0
     local num=${#options[@]}
+    [ "$num" -eq 0 ] && return 1
+
+    # Without a TTY (pipe, SSH without -t) the options are chosen by number
+    if [ ! -t 0 ]; then
+        echo -e "${COLOR_HEAD}$(msg select_option)${COLOR_RESET}" >&2
+        local _i
+        for (( _i=0; _i<num; _i++ )); do
+            printf "  %d)  %s\n" "$(( _i + 1 ))" "${options[$_i]}" >&2
+        done
+        local _pick=""
+        printf "Select [1-%d] (empty = first): " "$num" >&2
+        IFS= read -r _pick || _pick=""
+        case "$_pick" in
+            ''|*[!0-9]*) ;;
+            *)
+                if [ "$_pick" -ge 1 ] && [ "$_pick" -le "$num" ]; then
+                    echo "${options[$(( _pick - 1 ))]}"
+                    return 0
+                fi
+                ;;
+        esac
+        echo "${options[0]}"
+        return 0
+    fi
 
     while true; do
         # Cursor zurück auf 0,0 statt clear → kein Flicker (wie Hauptmenü)
         if [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_CUP:-}" ]; then
-            echo -ne "$TPUT_CUP"
+            echo -ne "$TPUT_CUP" >&2
         else
-            clear
+            clear >&2
         fi
-        echo -e "${COLOR_HEAD}$(msg select_option)${COLOR_RESET}"
+        echo -e "${COLOR_HEAD}$(msg select_option)${COLOR_RESET}" >&2
         for (( i=0; i<num; i++ )); do
             if [ "$i" -eq "$selected" ]; then
-                echo -e "${COLOR_SEL}›${COLOR_RESET} ${options[$i]}"
+                echo -e "${COLOR_SEL}›${COLOR_RESET} ${options[$i]}" >&2
             else
-                echo "  ${options[$i]}"
+                echo "  ${options[$i]}" >&2
             fi
         done
-        echo -e "\n${COLOR_DIM}$(msg dropdown_hint)${COLOR_RESET}"
+        echo -e "\n${COLOR_DIM}$(msg dropdown_hint)${COLOR_RESET}" >&2
         # Rest der Zeilen löschen damit alte Einträge nicht stehen bleiben
-        [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_ED:-}" ] && echo -ne "$TPUT_ED"
+        [ "${HAS_TPUT:-0}" -eq 1 ] && [ -n "${TPUT_ED:-}" ] && echo -ne "$TPUT_ED" >&2
 
         key=$(read_key) || return 1
         case "$key" in
@@ -2170,20 +2700,145 @@ _execute_pipeline_callback() {
     execute_task "$step_cmd" "$step_name" "$step_desc" || return 1
 }
 
+# ==============================================================================
+#  COMMAND RUNNER — TIMEOUT, INTERRUPT AND OUTPUT STREAMING
+# ==============================================================================
+
+# PIDs of the running parallel tasks — used by the Ctrl+C handler.
+_parallel_task_pids=()
+
+# Stops all running parallel tasks (task command + wrapper).
+_kill_parallel_tasks() {
+    local _p
+    # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+    [ ${#_parallel_task_pids[@]} -eq 0 ] && return 0
+    for _p in "${_parallel_task_pids[@]}"; do
+        pkill -P "$_p" 2>/dev/null || true
+        kill -TERM "$_p" 2>/dev/null || true
+    done
+}
+
+# Runs a task command and streams its output to the terminal and the log file.
+#
+# Two details make the difference between "the menu comes back" and "the
+# terminal has to be closed":
+#
+#  * The command runs in the *foreground*.  Bash sets SIGINT/SIGQUIT to
+#    "ignore" for background jobs, so a task started with `&` could never be
+#    stopped with Ctrl+C.  Foreground + `trap ':' INT` in the menu keeps the
+#    default disposition in the child — Ctrl+C kills the task, the menu lives.
+#
+#  * The menu waits for the *command*, never for the end of the output pipe.
+#    A task that leaves a background process behind (release script, dev
+#    server, `cmd &`) keeps the pipe open forever — waiting for EOF froze the
+#    menu until the terminal was closed.
+#
+# A watchdog enforces the timeout because macOS ships no `timeout` binary
+# (only GNU coreutils provides it), so the configured TIMEOUT was silently
+# ignored on macOS.
+#
+# Usage: run_task_streamed <script> <log-file> <timeout> [command args...]
+# The exit status is returned in TASK_EXIT_STATUS (the output has to reach the
+# terminal, so this must not run inside a command substitution).
+TASK_EXIT_STATUS=0
+run_task_streamed() {
+    local _script="$1" _log="$2" _secs="$3"
+    shift 3
+    local _fifo _pidfile _donefile _timeoutfile _reader_done
+    local _rc=0 _n=0 _line
+
+    TASK_EXIT_STATUS=0
+    case "$_secs" in
+        ''|*[!0-9]*) _secs=300 ;;
+    esac
+    [ "$_secs" -le 0 ] && _secs=300
+
+    _fifo="${CACHE_DIR}/task_fifo_$$_${_log##*/}"
+    _pidfile="${_fifo}.pid"
+    _donefile="${_fifo}.done"
+    _timeoutfile="${_fifo}.timeout"
+    _reader_done="${_fifo}.reader"
+    rm -f "$_fifo" "$_pidfile" "$_donefile" "$_timeoutfile" "$_reader_done"
+
+    if ! mkfifo "$_fifo" 2>/dev/null; then
+        # No FIFO available → run without live streaming
+        ( exec "$@" ) 2>&1 | tee -a "$_log"
+        TASK_EXIT_STATUS="${PIPESTATUS[0]}"
+        return 0
+    fi
+
+    # Reader: forwards the FIFO content to the terminal and the log file.
+    # `|| [ -n "$_line" ]` keeps the last line when the task output has no
+    # trailing newline (e.g. `printf SUCCESS`).
+    (
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            process_progress_output "$_line"
+            printf '%s\n' "$_line" >> "$_log"
+            _line=""
+        done < "$_fifo"
+        : > "$_reader_done"
+    ) &
+    local _reader_pid=$!
+
+    # Watchdog: stops the command when the timeout expires.
+    # Its output goes to /dev/null — a background job that keeps stdout open
+    # would block `run --task | command` until the timeout expired.
+    (
+        sleep "$_secs"
+        _wpid=$(cat "$_pidfile" 2>/dev/null)
+        if [ -n "$_wpid" ] && [ ! -f "$_donefile" ]; then
+            printf '1' > "$_timeoutfile"
+            kill -TERM "$_wpid" 2>/dev/null
+            sleep 1
+            kill -KILL "$_wpid" 2>/dev/null
+        fi
+    ) >/dev/null 2>&1 &
+    local _watchdog_pid=$!
+
+    # Command (foreground): `sh -c 'echo $PPID'` publishes the PID of this
+    # subshell for the watchdog, `exec` replaces it with the command itself.
+    ( sh -c 'echo $PPID' > "$_pidfile"; exec "$@" ) > "$_fifo" 2>&1
+    _rc=$?
+
+    : > "$_donefile"
+    # Stop the watchdog and its sleep before it is killed itself — otherwise
+    # the sleep would survive as an orphan.
+    pkill -P "$_watchdog_pid" 2>/dev/null || true
+    kill "$_watchdog_pid" 2>/dev/null || true
+
+    # Let the reader flush the remaining output, then stop it
+    while [ ! -f "$_reader_done" ] && [ "$_n" -lt 10 ]; do
+        sleep 0.1 2>/dev/null || sleep 1
+        _n=$(( _n + 1 ))
+    done
+    kill "$_reader_pid" 2>/dev/null || true
+    wait "$_reader_pid" 2>/dev/null || true
+
+    [ -f "$_timeoutfile" ] && _rc=124
+    rm -f "$_fifo" "$_pidfile" "$_donefile" "$_timeoutfile" "$_reader_done"
+
+    TASK_EXIT_STATUS="$_rc"
+    return 0
+}
+
 execute_task_pipeline() {
     local task_cmd="$1"
     local steps_str="${task_cmd#tasks:}"
     local IFS=';'
-    local -a steps
+    local -a steps=()
     read -r -a steps <<< "$steps_str"
     echo -e "${COLOR_INFO}$(msg task_depends):${COLOR_RESET}"
+    # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
+    [ ${#steps[@]} -eq 0 ] && return 0
     for step in "${steps[@]}"; do
         step=$(trim_whitespace "$step")
         [ -z "$step" ] && continue
         echo -e "  ${COLOR_DIM}→ $step${COLOR_RESET}"
         if ! find_task_in_menu "$step" '_execute_pipeline_callback'; then
             echo -e "${COLOR_ERR}❌ Task '$step' not found in:${COLOR_RESET}"
-            for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+            if [ ${#task_config_files[@]} -gt 0 ]; then
+                for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
+            fi
             return 1
         fi
     done
@@ -2204,7 +2859,8 @@ execute_tasks_parallel() {
     local -a logs=()
     local started=0
     for idx in "${keys[@]}"; do
-        IFS='|' read -r level name cmd desc <<< "${menu_options[$idx]}"
+        split_task_line "${menu_options[$idx]}"
+        level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
         if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
             continue
         fi
@@ -2216,34 +2872,24 @@ execute_tasks_parallel() {
         log_file=$(create_log_file "$name")
         local start_time
         start_time=$(date +%s)
+        # shellcheck disable=SC2016
+        local _par_script='
+            trap - INT
+            trap - PIPE
+            [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
+            [ -f ".env" ] && set -a && source .env && set +a
+            eval "$RUN_CMD"
+        '
         (
-            if command -v timeout >/dev/null 2>&1; then
-                # shellcheck disable=SC2016
-                timeout "$task_timeout" env \
-                    RUN_MODE="$active_mode" \
-                    RUN_DIR="$(dirname "$config_path")" \
-                    RUN_CMD="$cmd" \
-                    bash -c '
-                        [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
-                        [ -f ".env" ] && set -a && source .env && set +a
-                        eval "$RUN_CMD"
-                    ' 2>&1 | tee "$log_file"
-                exit "${PIPESTATUS[0]}"
-            else
-                # shellcheck disable=SC2016
+            run_task_streamed "$_par_script" "$log_file" "$task_timeout" \
                 env \
-                    RUN_MODE="$active_mode" \
-                    RUN_DIR="$(dirname "$config_path")" \
-                    RUN_CMD="$cmd" \
-                    bash -c '
-                        [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
-                        [ -f ".env" ] && set -a && source .env && set +a
-                        eval "$RUN_CMD"
-                    ' 2>&1 | tee "$log_file"
-                exit "${PIPESTATUS[0]}"
-            fi
+                RUN_MODE="$active_mode" \
+                RUN_DIR="${config_path%/*}" \
+                RUN_CMD="$cmd" \
+                bash -c "$_par_script"
         ) &
         pids+=("$!")
+        _parallel_task_pids+=("$!")
         names+=("$name")
         starts+=("$start_time")
         logs+=("$log_file")
@@ -2254,6 +2900,10 @@ execute_tasks_parallel() {
         sleep 1
         return
     fi
+    # Ctrl+C stops all running parallel tasks.  Bash sets SIGINT to "ignore"
+    # for background jobs, so the tasks themselves cannot be interrupted —
+    # the menu kills them (and their children) instead.
+    trap '_kill_parallel_tasks' INT
     for i in "${!pids[@]}"; do
         wait "${pids[$i]}"
         local status=$?
@@ -2267,6 +2917,7 @@ execute_tasks_parallel() {
             echo -e "${COLOR_ERR}✗ ${names[$i]}${COLOR_RESET} (${dur}s)"
         fi
     done
+    trap 'restore_term; cleanup_wrapper; exit 130' INT
     # Parallel tasks may have altered terminal state — restore and suppress echo
     # before the "press key" prompt so no garbage appears on screen.
     stty sane 2>/dev/null || true
@@ -2374,47 +3025,37 @@ execute_task() {
         # Script-String einmal definieren – shared zwischen timeout- und fallback-Pfad
         # shellcheck disable=SC2016
         local _exec_script='
+            trap - INT
+            trap - PIPE
             [ "$RUN_MODE" == "local" ] && cd "$RUN_DIR"
             [ -f ".env" ] && set -a && source .env && set +a
             eval "$RUN_CMD $RUN_ARGS"
         '
-        # Stream output in real-time: pipe directly to log + terminal.
-        # set +e needed so a non-zero exit from the sub-process doesn't trigger
-        # errexit before PIPESTATUS is captured.
-        # trap '' INT: parent ignores Ctrl+C so only the child process is killed;
-        # the menu continues and shows a "Cancelled" message instead of exiting.
-        exec 3>>"$log_file"
+        # `trap ':' INT` keeps the menu alive while Ctrl+C reaches the task:
+        # a *trapped* signal is reset to its default disposition in the child,
+        # while `trap '' INT` (ignore) would be inherited by the task and make
+        # it impossible to stop — the terminal had to be closed instead.
+        # The errexit state is restored afterwards — the interactive loop runs
+        # with `set +e` and must not be switched to strict mode by a task.
+        local _errexit_was=0
+        case "$-" in *e*) _errexit_was=1 ;; esac
         set +e
-        trap '' INT
-        if command -v timeout >/dev/null 2>&1; then
-            timeout "$task_timeout" env \
-                RUN_MODE="$active_mode" \
-                RUN_DIR="$config_dir" \
-                RUN_CMD="$cmd" \
-                RUN_ARGS="${args[*]:-}" \
-                bash -c "$_exec_script" 2>&1 | while IFS= read -r line; do
-                    process_progress_output "$line"
-                    printf '%s\n' "$line" >&3
-                done
-            exit_status=${PIPESTATUS[0]}
-            [ "$exit_status" -eq 124 ] && \
-                echo -e "\n${COLOR_ERR}$(msg task_timeout) (${task_timeout}s).${COLOR_RESET}"
-        else
+        trap ':' INT
+        run_task_streamed "$_exec_script" "$log_file" "$task_timeout" \
             env \
-                RUN_MODE="$active_mode" \
-                RUN_DIR="$config_dir" \
-                RUN_CMD="$cmd" \
-                RUN_ARGS="${args[*]:-}" \
-                bash -c "$_exec_script" 2>&1 | while IFS= read -r line; do
-                    process_progress_output "$line"
-                    printf '%s\n' "$line" >&3
-                done
-            exit_status=${PIPESTATUS[0]}
-        fi
-        set -e
-        exec 3>&-
+            RUN_MODE="$active_mode" \
+            RUN_DIR="$config_dir" \
+            RUN_CMD="$cmd" \
+            RUN_ARGS="${args[*]:-}" \
+            bash -c "$_exec_script"
+        exit_status="$TASK_EXIT_STATUS"
+        [ "$_errexit_was" -eq 1 ] && set -e
         # Restore the menu's Ctrl+C handler now that the child has finished
-        [ "${is_interactive:-0}" -eq 1 ] && trap 'restore_term; cleanup_wrapper; exit 130' INT
+        if [ "${is_interactive:-0}" -eq 1 ]; then
+            trap 'restore_term; cleanup_wrapper; exit 130' INT
+        else
+            trap handle_interrupt INT TERM
+        fi
     fi
 
     local end_time
@@ -2426,7 +3067,7 @@ execute_task() {
     elif [ "$exit_status" -eq 130 ]; then
         echo -e "\n${COLOR_WARN}⚡ Abgebrochen (Ctrl+C)${COLOR_RESET}"
     elif [ "$exit_status" -eq 124 ]; then
-        echo -e "\n${COLOR_ERR}$(msg task_failed) (timeout).${COLOR_RESET}"
+        echo -e "\n${COLOR_ERR}$(msg task_failed) (timeout ${task_timeout}s).${COLOR_RESET}"
     else
         echo -e "\n${COLOR_ERR}$(msg task_failed) (exit $exit_status).${COLOR_RESET}"
     fi
@@ -2485,23 +3126,25 @@ cli_match_tasks() {
         return 0
     fi
 
-    local query_lower i _lvl _name _cmd _desc name_lower
-    query_lower=$(tr '[:upper:]' '[:lower:]' <<< "$query")
+    local i _lvl _name _cmd _desc
+    local _nocase_was=0
+    shopt -q nocasematch && _nocase_was=1
+    shopt -s nocasematch
 
     # Pass 1: exact name match (case-insensitive full string)
     for (( i=0; i<total; i++ )); do
-        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
-        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
-        [ "$name_lower" = "$query_lower" ] && _cli_matches+=("$i")
+        split_task_line "${menu_options[$i]}"
+        [[ "$_f_name" == "$query" ]] && _cli_matches+=("$i")
     done
-    [ "${#_cli_matches[@]}" -gt 0 ] && return 0
+    [ "${#_cli_matches[@]}" -gt 0 ] && { [ "$_nocase_was" -eq 0 ] && shopt -u nocasematch; return 0; }
 
     # Pass 2: substring match (case-insensitive)
     for (( i=0; i<total; i++ )); do
-        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
-        name_lower=$(tr '[:upper:]' '[:lower:]' <<< "$_name")
-        [[ "$name_lower" == *"$query_lower"* ]] && _cli_matches+=("$i")
+        split_task_line "${menu_options[$i]}"
+        [[ "$_f_name" == *"$query"* ]] && _cli_matches+=("$i")
     done
+
+    [ "$_nocase_was" -eq 0 ] && shopt -u nocasematch
 
     if [ "${#_cli_matches[@]}" -eq 0 ]; then
         echo "No task found matching '$query'" >&2
@@ -2534,19 +3177,26 @@ cli_run_task() {
     else
         # Disambiguation: print matches, read single keypress
         echo "Multiple matches for \"$query\":"
-        local j _lvl _name _cmd _desc
+        local j
         for (( j=0; j<match_count; j++ )); do
-            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[${_cli_matches[$j]}]}"
-            printf "  %d)  %s\n" "$(( j + 1 ))" "$_name"
+            split_task_line "${menu_options[${_cli_matches[$j]}]}"
+            printf "  %d)  %s\n" "$(( j + 1 ))" "$_f_name"
         done
         echo ""
         printf "Select [1-%d] or q to cancel: " "$match_count"
 
         local key
         while true; do
-            stty -icanon min 1 time 0 2>/dev/null
-            key=$(dd bs=1 count=1 2>/dev/null)
-            stty sane 2>/dev/null || true
+            if [ -t 0 ]; then
+                stty -icanon min 1 time 0 2>/dev/null || true
+                key=$(dd bs=1 count=1 2>/dev/null)
+                stty sane 2>/dev/null || true
+                # A closed stdin would spin this loop forever
+                [ -z "$key" ] && { echo ""; echo "Cancelled."; return 0; }
+            else
+                # No TTY (pipe/SSH): read a whole line
+                IFS= read -r key || { echo ""; echo "Cancelled."; return 0; }
+            fi
             case "$key" in
                 q|Q|$'\x1b')
                     echo ""
@@ -2567,8 +3217,8 @@ cli_run_task() {
     fi
 
     local _lvl _name _cmd _desc
-    IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$chosen_idx]}"
-    execute_task "$_cmd" "$_name" "$_desc"
+    split_task_line "${menu_options[$chosen_idx]}"
+    execute_task "$_f_cmd" "$_f_name" "$_f_desc"
     return $?
 }
 
@@ -2581,13 +3231,16 @@ cli_list_tasks() {
         echo "No tasks found."
         return 0
     fi
-    echo "Tasks ($total)"
-    local i _lvl _name _cmd _desc
+    # 2>/dev/null: a closed stdout (`run --list | head`) must not produce a
+    # "write error: Broken pipe" message from the bash builtin.
+    echo "Tasks ($total)" 2>/dev/null || return 0
+    local i
     for (( i=0; i<total; i++ )); do
-        IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$i]}"
+        split_task_line "${menu_options[$i]}"
         local num=$(( i + 1 ))
-        printf "  %2d)  %-22s  %s\n" "$num" "${_name:0:22}" "$_desc"
+        printf "  %2d)  %-22s  %s\n" "$num" "${_f_name:0:22}" "$_f_desc" 2>/dev/null || break
     done
+    return 0
 }
 
 # ==============================================================================
@@ -2671,6 +3324,16 @@ extract_field_from_grep() {
 
 # Terminal capabilities are initialized in 03-terminal.sh via init_terminal_capabilities
 
+# Cache for the padded name fields of the menu (index → padded text).
+# Measuring the display width of every entry is expensive, and the fields
+# only change when the menu or the terminal width changes.
+declare -a _name_field_cache=()
+_name_field_cache_key=""
+
+# Redraw counter — used to poll the terminal width (not every SSH client
+# sends SIGWINCH when the window is resized).
+_redraw_counter=0
+
 # Setzt _layout_rows/_layout_cols direkt — kein Subshell-Overhead bei jedem Redraw
 calculate_layout() {
     local total="$1"
@@ -2706,12 +3369,43 @@ calculate_layout() {
 
 show_help_panel() {
     clear
-    cat << EOF
-${COLOR_HEAD}════════════════════════════════════════════════════════════════${COLOR_RESET}
-${COLOR_HEAD}║                    SHELL MENU RUNNER v${VERSION}                 ║${COLOR_RESET}
-${COLOR_HEAD}════════════════════════════════════════════════════════════════${COLOR_RESET}
+    # Box width adapts to the terminal — a fixed 64 column frame wraps on
+    # narrow terminals and breaks the layout.
+    local _w=$(( ${TPUT_COLS:-80} - 2 ))
+    [ "$_w" -gt 64 ] && _w=64
+    [ "$_w" -lt 30 ] && _w=30
 
-${COLOR_SEL}Navigation:${COLOR_RESET}
+    local _bar="" _i
+    for (( _i=0; _i<_w; _i++ )); do _bar+='═'; done
+
+    local _title="SHELL MENU RUNNER v${VERSION}"
+    local _inner=$(( _w - 2 ))
+    local _tpad=$(( (_inner - ${#_title}) / 2 ))
+    [ "$_tpad" -lt 0 ] && _tpad=0
+    local _lead="" _trail=""
+    printf -v _lead '%*s' "$_tpad" ''
+    printf -v _trail '%*s' "$(( _inner - ${#_title} - _tpad ))" ''
+
+    echo -e "${COLOR_HEAD}${_bar}${COLOR_RESET}"
+    echo -e "${COLOR_HEAD}║${_lead}${_title}${_trail}║${COLOR_RESET}"
+    echo -e "${COLOR_HEAD}${_bar}${COLOR_RESET}"
+    echo ""
+
+    # The help lines are cut to the terminal width so they cannot wrap.
+    # Section headers (no indent, own line) are printed coloured, the
+    # indented entries are cut to the available width.
+    local _line
+    while IFS= read -r _line; do
+        if [ -z "$_line" ]; then
+            echo ""
+        elif [ "${_line%%:*}" != "$_line" ] && [ "${_line:0:2}" != "  " ]; then
+            echo -e "${COLOR_SEL}${_line}${COLOR_RESET}"
+        else
+            fit_to_width "$_line" "$_w"
+            echo "${FIT_TEXT}"
+        fi
+    done << EOF
+Navigation:
   ↑/↓ or j/k      Navigate tasks
   ←/→ or h/l      Multi-column navigation
   [Enter]         Execute selected task
@@ -2719,7 +3413,7 @@ ${COLOR_SEL}Navigation:${COLOR_RESET}
   [Space]         Multi-select (execute multiple)
   [ESC] or q      Exit / Go back
 
-${COLOR_SEL}Features:${COLOR_RESET}
+Features:
   /               Search/filter tasks
   #               Filter by tags
   g               Toggle local/global config
@@ -2733,13 +3427,14 @@ ${COLOR_SEL}Features:${COLOR_RESET}
   a               Alias editor
   ?               This help
 
-${COLOR_SEL}Profiles:${COLOR_RESET}
+Profiles:
   run [profile]   Load specific profile
   run --list      List all profiles
   run --init      Initialize new .tasks config
-
-${COLOR_DIM}Press any key to continue...${COLOR_RESET}
 EOF
+
+    echo ""
+    echo -e "${COLOR_DIM}Press any key to continue...${COLOR_RESET}"
     consume_keypress
 }
 
@@ -2781,6 +3476,12 @@ get_menu_options() {
     local -a active_parents=()
     local k i
 
+    # nocasematch makes the filter regex case-insensitive — that replaces a
+    # `tr` fork per config line.  The previous shell option is restored below.
+    local _nocase_was=0
+    shopt -q nocasematch && _nocase_was=1
+    [ -n "$search_pattern" ] && shopt -s nocasematch
+
     # Process substitution: Config-Inhalt direkt streamen — kein all_output-String-Kopie im Speicher
     while IFS= read -r line || [ -n "$line" ]; do
         [ -z "$line" ] && continue
@@ -2790,7 +3491,8 @@ get_menu_options() {
         [[ "$line" =~ ^THEME: ]] && continue
         [[ "$line" =~ ^TITLE: ]] && continue
 
-        IFS='|' read -r level name cmd desc <<< "$line"
+        split_task_line "$line"
+        level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
         [ -z "$name" ] && continue
         [[ "$level" =~ ^[0-9]+$ ]] || continue
 
@@ -2818,12 +3520,10 @@ get_menu_options() {
             [ "$parent_match" -eq 0 ] && continue
         fi
 
-        # Search filtering
+        # Search filtering — nocasematch makes the regex case-insensitive, so
+        # no per-line `tr` fork (and no here-string) is needed.
         if [ -n "$search_pattern" ]; then
-            local search_text
-            # here-string statt echo|tr: spart einen Subshell-Pipe-Prozess pro Zeile
-            search_text=$(tr '[:upper:]' '[:lower:]' <<< "$name $desc")
-            [[ ! "$search_text" =~ $search_pattern ]] && continue
+            [[ ! "$name $desc" =~ $search_pattern ]] && continue
         fi
 
         # Tag filtering
@@ -2834,6 +3534,9 @@ get_menu_options() {
         # Append to result buffer (do not echo here to avoid recursion)
         result+="${level}|${name}|${cmd}|${desc}"$'\n'
     done < <(merge_configs)
+
+    # Restore the previous nocasematch state
+    [ "$_nocase_was" -eq 0 ] && shopt -u nocasematch
 
     # Cache result (store the constructed string, avoid calling get_menu_options again)
     if [ "$RUN_CACHE_PROFILES" -eq 1 ] && [ -z "$filter_query" ] && [ -z "$tag_filter" ] && [ -f "$config_path" ]; then
@@ -2855,6 +3558,21 @@ draw_menu() {
     fi
     hide_cursor
     local _EL='\033[K'   # erase-to-EOL — prevents ghost text from shorter redraws
+    local term_width="${TPUT_COLS:-80}"
+
+    # Not every SSH client delivers SIGWINCH on a resize — poll the width from
+    # time to time so the menu still adapts (one fork every 20 redraws).
+    _redraw_counter=$(( _redraw_counter + 1 ))
+    if [ "$_redraw_counter" -ge 20 ]; then
+        _redraw_counter=0
+        local _new_cols
+        _new_cols=$(tput cols 2>/dev/null || true)
+        if [ -n "$_new_cols" ] && [ "$_new_cols" != "$TPUT_COLS" ]; then
+            TPUT_COLS="$_new_cols"
+            _LAST_COL_WIDTH=0
+        fi
+        term_width="${TPUT_COLS:-80}"
+    fi
 
     # ── Header ───────────────────────────────────────────────────────
     local mode_indicator="[${active_mode}]"
@@ -2863,24 +3581,41 @@ draw_menu() {
         local _pname="${_bn##.tasks}"; _pname="${_pname#.}"
         [ -n "$_pname" ] && mode_indicator="[${_pname}]"
     fi
-    echo -e "${COLOR_HEAD}════ Shell Menu Runner ${VERSION} ${mode_indicator} ════${COLOR_RESET}${_EL}"
+    fit_to_width "════ Shell Menu Runner ${VERSION} ${mode_indicator} ════" "$term_width"
+    echo -e "${COLOR_HEAD}${FIT_TEXT}${COLOR_RESET}${_EL}"
 
     # Context line (git branch, hostname, env) — empty string = no line
-    [ -n "${_CTX_LINE:-}" ] && echo -e "${_CTX_LINE}${_EL}"
+    if [ -n "${_CTX_LINE:-}" ]; then
+        display_width "${_CTX_LINE_PLAIN:-$_CTX_LINE}"
+        if [ "$DISPLAY_WIDTH" -le "$term_width" ]; then
+            echo -e "${_CTX_LINE}${_EL}"
+        else
+            fit_to_width "${_CTX_LINE_PLAIN:-$_CTX_LINE}" "$term_width"
+            echo -e "${COLOR_DIM}${FIT_TEXT}${COLOR_RESET}${_EL}"
+        fi
+    fi
 
     if [ "$current_level" -gt 0 ]; then
         local _bc=""
         for _bname in "${history_name_stack[@]}"; do _bc="${_bc}${_bname} > "; done
-        echo -e "${COLOR_DIM}${_bc%> }${COLOR_RESET}${_EL}"
+        fit_to_width "${_bc%> }" "$term_width"
+        echo -e "${COLOR_DIM}${FIT_TEXT}${COLOR_RESET}${_EL}"
     fi
-    [ -n "$filter_query" ] && echo -e "${COLOR_INFO}📎 Filter: $filter_query${COLOR_RESET}${_EL}"
-    [ -n "$tag_filter"   ] && echo -e "${COLOR_INFO}🏷  Tag: $tag_filter${COLOR_RESET}${_EL}"
+    if [ -n "$filter_query" ]; then
+        fit_to_width "📎 Filter: $filter_query" "$term_width"
+        echo -e "${COLOR_INFO}${FIT_TEXT}${COLOR_RESET}${_EL}"
+    fi
+    if [ -n "$tag_filter" ]; then
+        fit_to_width "🏷  Tag: $tag_filter" "$term_width"
+        echo -e "${COLOR_INFO}${FIT_TEXT}${COLOR_RESET}${_EL}"
+    fi
     echo -e "${_EL}"
 
     # ── Empty state ──────────────────────────────────────────────────
     local total=${#menu_options[@]}
     if [ "$total" -eq 0 ]; then
-        echo -e "${COLOR_DIM}No tasks found. Press 'e' to edit config or '?' for help.${COLOR_RESET}${_EL}"
+        fit_to_width "No tasks found. Press 'e' to edit config or '?' for help." "$term_width"
+        echo -e "${COLOR_DIM}${FIT_TEXT}${COLOR_RESET}${_EL}"
         [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
         return
     fi
@@ -2888,12 +3623,17 @@ draw_menu() {
     # ── Layout ───────────────────────────────────────────────────────
     calculate_layout "$total"
     local rows=$_layout_rows cols=$_layout_cols
-    local term_width="${TPUT_COLS:-80}"
     local col_width=$(( term_width / cols ))
     local inner=$(( col_width - 4 ))
     [ "$inner" -lt 1 ] && inner=1
     local name_max=$(( inner - 4 ))
     [ "$name_max" -lt 1 ] && name_max=1
+
+    # The cached name fields are only valid for the current column width
+    if [ "$_name_field_cache_key" != "$name_max" ]; then
+        _name_field_cache=()
+        _name_field_cache_key="$name_max"
+    fi
 
     # Rebuild border strings when col_width changed (e.g. terminal resize)
     if [ "$col_width" -ne "${_LAST_COL_WIDTH:-0}" ]; then
@@ -2928,7 +3668,8 @@ draw_menu() {
 
             # Content
             # shellcheck disable=SC2034
-            IFS='|' read -r _lvl _name _cmd _desc <<< "${menu_options[$idx]}"
+            split_task_line "${menu_options[$idx]}"
+            _lvl="$_f_level"; _name="$_f_name"; _cmd="$_f_cmd"; _desc="$_f_desc"
 
             # Hotkey prefix (2 chars) + marker (1 char) = 3 chars, same total as before.
             # Keeping them separate avoids "1►" overlap: shows "1 ►" instead.
@@ -2945,35 +3686,22 @@ draw_menu() {
                 marker="☑"; text_color="$COLOR_INFO"
             fi
 
-            # Wide-char visual-width correction.
-            # IMPORTANT: do NOT use printf "%-*s" for padding — bash 3.2 counts
-            # bytes (not visual columns) in the field-width, so emoji names come
-            # out 1-3 cols too narrow.  Instead we calculate the exact number of
-            # spaces needed and append them as plain ASCII.
-            local _nc=${#_name} _nb _lc_was_set=0 _lc_saved=""
-            [ -n "${LC_ALL+x}" ] && _lc_was_set=1 && _lc_saved="$LC_ALL"
-            LC_ALL=C; _nb=${#_name}
-            if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
-            local _wc_extra=$(( (_nb - _nc) / 3 ))   # extra terminal cols from wide chars
-
-            # Truncate to fit (check visual width)
-            if [ $(( _nc + _wc_extra )) -gt "$name_max" ]; then
-                local _trunc=$(( name_max - 3 - _wc_extra ))
-                [ "$_trunc" -lt 1 ] && _trunc=1
-                _name="${_name:0:$_trunc}..."
-                # Recalculate after truncation
-                _nc=${#_name}
-                local _nb2; LC_ALL=C; _nb2=${#_name}
-                if [ "$_lc_was_set" -eq 1 ]; then LC_ALL="$_lc_saved"; else unset LC_ALL; fi
-                _wc_extra=$(( (_nb2 - _nc) / 3 ))
+            # Name field: exactly $name_max terminal columns.
+            # fit_to_width counts wide characters (CJK/emoji = 2 columns) and
+            # truncates without splitting a UTF-8 character — otherwise the
+            # content line overflows the box border and the terminal wraps.
+            #
+            # The result is cached per menu index: the field only changes when
+            # the menu or the terminal width changes, and measuring the width
+            # of every entry on every redraw is far too slow.
+            local _padded
+            if [ -n "${_name_field_cache[idx]:+set}" ]; then
+                _padded="${_name_field_cache[idx]}"
+            else
+                fit_to_width "$_name" "$name_max"
+                _padded="$FIT_TEXT"
+                _name_field_cache[idx]="$FIT_TEXT"
             fi
-            # Pad with explicit spaces — visual width guaranteed regardless of locale
-            local _vis=$(( _nc + _wc_extra ))
-            local _nspaces=$(( name_max - _vis ))
-            [ "$_nspaces" -lt 0 ] && _nspaces=0
-            local _spaces=""
-            [ "$_nspaces" -gt 0 ] && printf -v _spaces '%*s' "$_nspaces" ''
-            local _padded="${_name}${_spaces}"
 
             content_line+="${border_color}│${COLOR_RESET}${_hotkey_pfx}${text_color}${marker}${_padded}${COLOR_RESET} ${border_color}│${COLOR_RESET}"
         done
@@ -2985,14 +3713,17 @@ draw_menu() {
 
     # ── Footer hints (width-adaptive to prevent wrapping) ───────────
     echo -e "${_EL}"
-    if [ "$term_width" -ge 80 ]; then
-        local _nav_lr=""; [ "$cols" -gt 1 ] && _nav_lr=" ←→ h/l"
-        echo -e "${COLOR_DIM}[↑↓${_nav_lr}] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help${COLOR_RESET}${_EL}"
-    elif [ "$term_width" -ge 46 ]; then
-        echo -e "${COLOR_DIM}[↑↓←→] Nav | [Enter] Run | [/] Search | [?] Help${COLOR_RESET}${_EL}"
-    else
-        echo -e "${COLOR_DIM}[↑↓←→]  [Enter]  [/]  [?]${COLOR_RESET}${_EL}"
-    fi
+    local _nav_lr=""; [ "$cols" -gt 1 ] && _nav_lr=" ←→ h/l"
+    local _hint_full="[↑↓${_nav_lr}] Navigate | [Enter] Execute | [/] Search | [Space] Multi | [?] Help"
+    local _hint_mid="[↑↓←→] Nav | [Enter] Run | [/] Search | [?] Help"
+    local _hint_min="[↑↓←→] [Enter] [/] [?]"
+    # Pick the most detailed hint that still fits into the terminal width.
+    local _hint="$_hint_min"
+    display_width "$_hint_mid"
+    [ "$DISPLAY_WIDTH" -le "$term_width" ] && _hint="$_hint_mid"
+    display_width "$_hint_full"
+    [ "$DISPLAY_WIDTH" -le "$term_width" ] && _hint="$_hint_full"
+    echo -e "${COLOR_DIM}${_hint}${COLOR_RESET}${_EL}"
 
     [ "$HAS_TPUT" -eq 1 ] && [ -n "$TPUT_ED" ] && echo -ne "$TPUT_ED"
 }
@@ -3001,10 +3732,29 @@ draw_menu() {
 #  MAIN INTERACTIVE LOOP WITH KEYBOARD HANDLING
 # ==============================================================================
 
+# Prints the task list — used in the non-interactive mode (no TTY) where no
+# menu can be drawn, e.g. `ssh host "run"`.
+print_task_list() {
+    local total=${#menu_options[@]}
+    echo ""
+    echo -e "${COLOR_HEAD}Tasks ($total)${COLOR_RESET}"
+    local i
+    for (( i=0; i<total; i++ )); do
+        split_task_line "${menu_options[$i]}"
+        printf "  %2d)  %-24s  %s\n" "$(( i + 1 ))" "$_f_name" "$_f_desc"
+    done
+    echo ""
+    echo -e "${COLOR_DIM}Type a task number or name to execute it (q = quit):${COLOR_RESET}"
+    echo ""
+}
+
 # Lädt menu_options neu und aktualisiert calculate_layout.
 _reload_menu() {
     IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
     calculate_layout "${#menu_options[@]}"
+    # Die gepufferten Namensfelder gehören zum alten Menü → verwerfen
+    _name_field_cache=()
+    _name_field_cache_key=""
 }
 
 # Lädt Konfiguration + Menü neu — ersetzt das 5-Funktionen-Pattern
@@ -3042,20 +3792,29 @@ main_interactive_loop() {
     local redraw_needed=1
 
     # OPTIMIZATION: Set raw mode once to avoid stty overhead
-    local old_stty=""
+    # The terminal settings live in a global snapshot (03-terminal.sh) so the
+    # submenus (file browser, config editor) can restore them after an editor
+    # has run.
     restore_term() {
-        [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
+        restore_terminal_state
     }
 
     if [ "$is_interactive" -eq 1 ]; then
-        old_stty=$(stty -g 2>/dev/null)
+        _MENU_LOOP_ACTIVE=1
+        save_terminal_state
         set_raw_mode
         trap 'restore_term; cleanup_wrapper; exit 130' INT TERM
+    else
+        _MENU_LOOP_ACTIVE=0
+        # No TTY (SSH without -t, pipe): there is no menu to draw, so the task
+        # list is printed once and the tasks are selected by number or name.
+        print_task_list
     fi
 
     while true; do
-        # Only redraw if needed (performance optimization)
-        if [ "$redraw_needed" -eq 1 ]; then
+        # Only redraw if needed (performance optimization).
+        # Without a TTY the task list is printed instead of the menu.
+        if [ "$redraw_needed" -eq 1 ] && [ "$is_interactive" -eq 1 ]; then
             draw_menu
             redraw_needed=0
         fi
@@ -3063,16 +3822,34 @@ main_interactive_loop() {
         # ══════════════════════════════════════════════════════════════
         #  KEYBOARD INPUT HANDLING
         # ══════════════════════════════════════════════════════════════
-        local key="" _rk_status=0
+        local key="" _rk_status=0 _read_failures=0
         if [ "$is_interactive" -eq 1 ]; then
             # Capture exit status separately: command substitution strips trailing \n,
             # so a real Enter (\n) correctly becomes "".  But if read_key_raw fails
             # (e.g. EINTR from a signal), we must NOT treat the empty result as Enter.
             key=$(read_key_raw); _rk_status=$?
-            [ "$_rk_status" -ne 0 ] && continue
+            if [ "$_rk_status" -ne 0 ]; then
+                # A single failed read is normal (terminal resize interrupts the
+                # read) — but a permanently closed stdin would spin the loop at
+                # 100% CPU and freeze the menu.  Give up after a few attempts.
+                _read_failures=$(( _read_failures + 1 ))
+                if [ "$_read_failures" -ge 3 ]; then
+                    break
+                fi
+                redraw_needed=1
+                continue
+            fi
+            _read_failures=0
         else
-            # Non-interactive: read line (for SSH without TTY)
+            # Non-interactive (SSH without -t, pipe, cron): the input is a
+            # task number or a task name and is executed directly.
             read -r key || break
+            [ -z "$key" ] && break
+            case "$key" in
+                q|Q) restore_term; exit 0 ;;
+            esac
+            cli_run_task "$key" || true
+            continue
         fi
 
         # ══════════════════════════════════════════════════════════════
@@ -3108,7 +3885,8 @@ main_interactive_loop() {
                 local hotkey_idx=$((key - 1))
                 if [ "$hotkey_idx" -lt "$num" ]; then
                     selected_index="$hotkey_idx"
-                    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                    split_task_line "${menu_options[$selected_index]}"
+                    level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
                     if [ "$cmd" != "EXIT" ] && [ "$cmd" != "SUB" ] && [ "$cmd" != "BACK" ]; then
                         run_with_term_paused execute_task "$cmd" "$name" "$desc"
                     fi
@@ -3165,7 +3943,8 @@ main_interactive_loop() {
                     restore_term
                     IFS=$'\n' read -r -d '' -a multi_keys < <(printf "%s\n" "${!multi_select_map[@]}" | sort -n && printf '\0') || true
                     for mi in "${multi_keys[@]}"; do
-                        IFS='|' read -r level name cmd desc <<< "${menu_options[$mi]}"
+                        split_task_line "${menu_options[$mi]}"
+                        level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
                         [ "$cmd" == "EXIT" ] && continue
                         execute_task "$cmd" "$name" "$desc"
                     done
@@ -3181,7 +3960,8 @@ main_interactive_loop() {
                 set -u
 
                 # Single execution
-                IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                split_task_line "${menu_options[$selected_index]}"
+                level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
                 if [ "$cmd" == "EXIT" ]; then
                     restore_term; clear; exit 0
                 elif [ "$cmd" == "SUB" ]; then
@@ -3212,7 +3992,8 @@ main_interactive_loop() {
             "*") # Toggle favorite
                 # Internal operation, no restore needed
                 if [ "$selected_index" -lt "$num" ]; then
-                    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+                    split_task_line "${menu_options[$selected_index]}"
+                    level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
                     toggle_favorite "$name"
                 fi
                 redraw_needed=1;;
@@ -3225,6 +4006,9 @@ main_interactive_loop() {
         [ "$selected_index" -lt 0 ] && selected_index=$((cnt-1))
         [ "$selected_index" -ge "$cnt" ] && selected_index=0
     done
+
+    # The menu-specific Ctrl+C handler is no longer the active one
+    _MENU_LOOP_ACTIVE=0
 }
 
 # ==============================================================================
@@ -3236,7 +4020,8 @@ context_menu() {
     local num=${#menu_options[@]}
     [ "$num" -eq 0 ] && return
     [ "$selected_index" -ge "$num" ] && return
-    IFS='|' read -r level name cmd desc <<< "${menu_options[$selected_index]}"
+    split_task_line "${menu_options[$selected_index]}"
+    level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
     if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
         echo -e "${COLOR_WARN}No context actions for this entry.${COLOR_RESET}"
         sleep 1
@@ -3325,34 +4110,43 @@ file_browser() {
                 echo -e "${COLOR_INFO}Choose creation method:${COLOR_RESET}"
                 echo "1) Open in editor"
                 echo "2) Paste content"
-                method=$(read_key) || continue
-                
+                method=$(read_key) || break
+
                 case "$method" in
                     "1")
-                        ${EDITOR:-nano} "$filepath"
-                        stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                        run_external_editor "$filepath"
                         ;;
                     "2")
                         echo -e "${COLOR_INFO}Paste content (Ctrl+D to save):${COLOR_RESET}"
-                        cat > "$filepath"
-                        echo -e "${COLOR_SEL}✔ File created: $filename${COLOR_RESET}"
+                        # Without a terminal `cat` would swallow the remaining
+                        # input instead of ending at EOF.
+                        if [ -t 0 ]; then
+                            cat > "$filepath"
+                            echo -e "${COLOR_SEL}✔ File created: $filename${COLOR_RESET}"
+                        else
+                            echo -e "${COLOR_ERR}Paste mode needs an interactive terminal${COLOR_RESET}"
+                        fi
                         sleep 1
                         ;;
                 esac
                 ;;
             "2")
-                [ -f ".tasks" ] && ${EDITOR:-nano} ".tasks" || echo -e "${COLOR_ERR}.tasks not found${COLOR_RESET}"
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                if [ -f ".tasks" ]; then
+                    run_external_editor ".tasks"
+                else
+                    echo -e "${COLOR_ERR}.tasks not found${COLOR_RESET}"
+                fi
                 ;;
             "3")
                 if [ -f ".env" ]; then
-                    ${EDITOR:-nano} ".env"                    stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin                else
+                    run_external_editor ".env"
+                else
                     echo -e "\n${COLOR_INFO}Create .env? [y/N]${COLOR_RESET} "
                     read -n 1 -r REPLY
                     echo ""
                     if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                         touch ".env"
-                        ${EDITOR:-nano} ".env"
+                        run_external_editor ".env"
                     fi
                 fi
                 ;;
@@ -3375,8 +4169,7 @@ file_browser() {
                     if [[ "$fkey" =~ [1-9] ]]; then
                         local fsel=$((fkey - 1))
                         if [ "$fsel" -lt "${#all_files[@]}" ]; then
-                            ${EDITOR:-nano} "${all_files[$fsel]}"
-                            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                            run_external_editor "${all_files[$fsel]}"
                         fi
                     fi
                 fi
@@ -3409,20 +4202,32 @@ edit_config_menu() {
 
         case "$choice" in
             "1")
-                ${EDITOR:-nano} "$file"
-                # Restore clean terminal state after editor exit
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                run_external_editor "$file"
                 ;;
             "2")
                 clear
                 echo -e "${COLOR_HEAD}Replace File Content${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Paste your content below, then press Ctrl+D (or Ctrl+Z on Windows)${COLOR_RESET}"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
 
-                # Create temp file
+                # Create temp file inside $CACHE_DIR — the EXIT trap cleans it up
                 local tmp_file
-                tmp_file=$(mktemp)
-                cat > "$tmp_file"
+                tmp_file="${CACHE_DIR}/edit_$$_${RANDOM}.tmp"
+                if ! : > "$tmp_file" 2>/dev/null; then
+                    echo -e "${COLOR_ERR}$(msg temp_file_fail)${COLOR_RESET}"
+                    sleep 1
+                    continue
+                fi
+                # Without a terminal `cat` would swallow the remaining input
+                # instead of ending at EOF.
+                if [ -t 0 ]; then
+                    cat > "$tmp_file"
+                else
+                    echo -e "${COLOR_ERR}Paste mode needs an interactive terminal${COLOR_RESET}"
+                    rm -f "$tmp_file"
+                    sleep 1
+                    continue
+                fi
 
                 # Show preview
                 echo ""
@@ -3435,7 +4240,7 @@ edit_config_menu() {
                     mv "$tmp_file" "$file"
                     echo -e "${COLOR_SEL}✔ File updated!${COLOR_RESET}"
                 else
-                    rm "$tmp_file"
+                    rm -f "$tmp_file"
                     echo -e "${COLOR_INFO}Cancelled.${COLOR_RESET}"
                 fi
                 sleep 1
@@ -3443,9 +4248,9 @@ edit_config_menu() {
             "3")
                 clear
                 echo -e "${COLOR_HEAD}Current content:${COLOR_RESET}"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                 cat "$file"
-                echo -e "${COLOR_DIM}───────────────────────────────────────────────────────────────${COLOR_RESET}"
+                echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
                 echo ""
                 echo -e "${COLOR_DIM}$(msg press_key)${COLOR_RESET}"
                 consume_keypress
@@ -3473,9 +4278,7 @@ show_alias_editor() {
 # build=npm run build
 # test=npm test
 EOF
-            ${EDITOR:-nano} "$ALIAS_FILE"
-            # Restore clean terminal state after editor exit
-            stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+            run_external_editor "$ALIAS_FILE"
         fi
     else
         echo -e "${COLOR_DIM}Current aliases:${COLOR_RESET}"
@@ -3489,18 +4292,24 @@ EOF
 
         case "$choice" in
             "1")
-                ${EDITOR:-nano} "$ALIAS_FILE"
-                # Restore clean terminal state after editor exit
-                stty sane 2>/dev/null || true; stty -echo 2>/dev/null || true; drain_stdin
+                run_external_editor "$ALIAS_FILE"
                 ;;
             "2")
                 echo -e "\n${COLOR_INFO}Alias name:${COLOR_RESET}"
                 read -r alias_name
                 echo -e "${COLOR_INFO}Task name:${COLOR_RESET}"
                 read -r task_name
-                echo "${alias_name}=${task_name}" >> "$ALIAS_FILE"
-                echo -e "${COLOR_SEL}✔ Alias added!${COLOR_RESET}"
-                sleep 1
+                # The alias file format is "alias_name=task_name" — an '=' or
+                # whitespace in the alias name would break the parsing.
+                if [ -z "$alias_name" ] || [ -z "$task_name" ] \
+                   || [[ "$alias_name" == *"="* ]] || [[ "$alias_name" == *[[:space:]]* ]]; then
+                    echo -e "${COLOR_ERR}Invalid alias name (no '=' or whitespace allowed)${COLOR_RESET}"
+                    sleep 1
+                else
+                    echo "${alias_name}=${task_name}" >> "$ALIAS_FILE"
+                    echo -e "${COLOR_SEL}✔ Alias added!${COLOR_RESET}"
+                    sleep 1
+                fi
                 ;;
         esac
     fi
@@ -3519,9 +4328,10 @@ load_aliases() {
 resolve_alias() {
     local input="$1"
     if [ -f "$ALIAS_FILE" ]; then
-        # awk for exact match – safe with special chars, no grep regex risks, no cut fork
+        # awk for exact match – safe with special chars, no grep regex risks, no cut fork.
+        # sub() instead of $2: the alias value may contain '=' itself.
         local resolved
-        resolved=$(awk -F'=' -v a="$input" '$1 == a { print $2; exit }' "$ALIAS_FILE" 2>/dev/null || true)
+        resolved=$(awk -v a="$input" 'index($0, a "=") == 1 { print substr($0, length(a) + 2); exit }' "$ALIAS_FILE" 2>/dev/null || true)
         if [ -n "$resolved" ]; then
             echo "$resolved"
             return 0
@@ -3556,7 +4366,7 @@ settings_menu() {
                 echo "2) MONO"
                 echo "3) DARK"
                 echo "4) LIGHT"
-                theme_choice=$(read_key) || continue
+                theme_choice=$(read_key) || break
                 case "$theme_choice" in
                     "1") UI_THEME="CYBER";;
                     "2") UI_THEME="MONO";;
@@ -3577,7 +4387,7 @@ settings_menu() {
                 ;;
             "3")
                 echo -e "\n${COLOR_INFO}Column Layout (1-4):${COLOR_RESET}"
-                col_val=$(read_key) || continue
+                col_val=$(read_key) || break
                 if [[ "$col_val" =~ [1-4] ]]; then
                     COLS_MIN="$col_val"
                     COLS_MAX="$col_val"
@@ -3841,33 +4651,37 @@ args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: run [options] [profile]"
-            echo ""
-            echo "CLI Mode (no menu):"
-            echo "  run --list              List all tasks for current profile"
-            echo "  run --run <name|num>    Execute task by name (fuzzy) or number"
-            echo "  run --dry-run --run <n> Preview command without executing"
-            echo "  run git --run build     Profile + task combined"
-            echo ""
-            echo "Profiles:"
-            echo "  run <name>              Load profile .tasks.<name>"
-            echo "  run --list-profiles     List all available profiles"
-            echo "  run --list-profiles=json  List profiles in JSON format"
-            echo "  run --init-profile <name>  Create new profile"
-            echo "  run --validate <name>   Validate profile syntax"
-            echo ""
-            echo "Multi-Profile Execution:"
-            echo "  run --across p1,p2,p3 task  Execute task across multiple profiles"
-            echo ""
-            echo "Analysis & Recommendations:"
-            echo "  run --analyze [profile]  Show analysis & improvement suggestions"
-            echo ""
-            echo "Other:"
-            echo "  run --init              Initialize .tasks in current dir"
-            echo "  run --global            Switch to global mode"
-            echo "  run --edit, -e          Edit config file"
-            echo "  run --update            Update script to latest version"
-            echo "  run --debug             Enable debug mode"
+            # 2>/dev/null: a closed stdout (`run --help | head`) must not
+            # produce a "write error: Broken pipe" message from the builtin.
+            {
+                echo "Usage: run [options] [profile]"
+                echo ""
+                echo "CLI Mode (no menu):"
+                echo "  run --list              List all tasks for current profile"
+                echo "  run --run <name|num>    Execute task by name (substring) or number"
+                echo "  run --dry-run --run <n> Preview command without executing"
+                echo "  run git --run build     Profile + task combined"
+                echo ""
+                echo "Profiles:"
+                echo "  run <name>              Load profile .tasks.<name>"
+                echo "  run --list-profiles     List all available profiles"
+                echo "  run --list-profiles=json  List profiles in JSON format"
+                echo "  run --init-profile <name>  Create new profile"
+                echo "  run --validate <name>   Validate profile syntax"
+                echo ""
+                echo "Multi-Profile Execution:"
+                echo "  run --across p1,p2,p3 task  Execute task across multiple profiles"
+                echo ""
+                echo "Analysis & Recommendations:"
+                echo "  run --analyze [profile]  Show analysis & improvement suggestions"
+                echo ""
+                echo "Other:"
+                echo "  run --init              Initialize .tasks in current dir"
+                echo "  run --global            Switch to global mode"
+                echo "  run --edit, -e          Edit config file"
+                echo "  run --update            Update script to latest version"
+                echo "  run --debug             Enable debug mode"
+            } 2>/dev/null || true
             exit 0
             ;;
         --version|-v)
@@ -3935,6 +4749,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --edit|-e)
             [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"
+            # Terminal-Snapshot, damit der Editor-Zustand danach wiederhergestellt
+            # werden kann (läuft vor check_interactive)
+            save_terminal_state
             edit_config_menu "$config_path"
             exit 0
             ;;
@@ -4035,6 +4852,12 @@ if [ "$is_interactive" -eq 0 ] && [ "$is_ssh_session" -eq 1 ] && [ "$ssh_hint_sh
     echo "Proceeding in non-interactive mode. Type task number to execute:"
     echo ""
     ssh_hint_shown=1
+fi
+
+# Without a TTY there is nobody to answer the interactive prompts (preview,
+# "press any key") — the tasks run in CLI mode instead.
+if [ "$is_interactive" -eq 0 ] && [ "${cli_mode:-0}" -eq 0 ]; then
+    cli_mode=1
 fi
 
 # CLI mode dispatch
