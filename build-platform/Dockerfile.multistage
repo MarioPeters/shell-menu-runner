@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # Build stage
-FROM alpine:3.22 AS builder
+FROM alpine:3.24 AS builder
 
 RUN apk add --no-cache bash
 
@@ -18,7 +18,7 @@ COPY build.sh ./
 RUN bash build.sh
 
 # Production stage
-FROM alpine:3.22
+FROM alpine:3.24
 
 LABEL maintainer="Mario Peters <mail@example.com>" \
       version="1.7.0" \

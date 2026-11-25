@@ -3,7 +3,7 @@
 #  Lightweight container for running shell-menu-runner
 # ==============================================================================
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 LABEL maintainer="Mario Peters <mail@example.com>" \
       version="1.7.0" \
