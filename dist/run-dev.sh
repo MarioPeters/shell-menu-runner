@@ -27,7 +27,7 @@ fi
 #  Lizenz: MIT
 # ==============================================================================
 
-readonly VERSION="2.1.6"
+readonly VERSION="2.1.7"
 # HOME wird für alle Konfigurationspfade gebraucht.  Ohne HOME brach das
 # Skript später mit "HOME: unbound variable" ab — die Meldung sagt dem
 # Nutzer nicht, was zu tun ist.

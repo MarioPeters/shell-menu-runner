@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.7] - 2026-11-25
+
+- fix: detect terminal size via stty so wide terminals get more than 2 columns
+
+
+
 ## [2.1.6] - 2026-11-25
 
 - fix: resolve symlinks in get_file_id on GNU stat; make tests CI-safe
