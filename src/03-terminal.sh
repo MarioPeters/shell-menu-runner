@@ -26,6 +26,7 @@ TPUT_CIVIS=""
 TPUT_CNORM=""
 TPUT_ED=""
 TPUT_COLS=80
+TPUT_LINES=24
 
 # ==============================================================================
 #  TERMINAL STATE SNAPSHOT
@@ -50,6 +51,16 @@ restore_terminal_state() {
         stty sane 2>/dev/null || true
     fi
     return 0
+}
+
+# Restores the terminal settings of the menu.
+#
+# Module level (not inside main_interactive_loop): the INT trap installed by
+# execute_task also runs in CLI mode (--run), where the interactive loop was
+# never entered — a locally defined function would not exist there and the
+# trap would fail with "restore_term: command not found".
+restore_term() {
+    restore_terminal_state
 }
 
 check_interactive() {
@@ -160,6 +171,17 @@ _U8_WIDTH=0
 # Result variables of the public helpers
 DISPLAY_WIDTH=0
 FIT_TEXT=""
+
+# Cached column widths of the constant menu footer hints.
+#
+# The UTF-8 decoder needs ~4 ms for a non-ASCII string (one printf per
+# byte) — measuring the same constant text again and again was the single
+# biggest cost of a menu redraw.  Both variants are cached together: a
+# cache with only one slot would miss on every call, because the two texts
+# are measured alternately.
+_HINT_MID_WIDTH=0
+_HINT_FULL_WIDTH=0
+_HINT_WIDTHS_KEY=""
 
 # Sets _U8_WIDTH to the number of terminal columns used by a code point.
 _u8_width() {
@@ -394,18 +416,28 @@ init_terminal_capabilities() {
     _TPUT_INITIALIZED=1
 
     if command -v tput >/dev/null 2>&1; then
-        TPUT_CUP="$(tput cup 0 0 2>/dev/null)"
-        TPUT_CIVIS="$(tput civis 2>/dev/null)"
-        TPUT_CNORM="$(tput cnorm 2>/dev/null)"
-        TPUT_ED="$(tput ed 2>/dev/null)"
-        TPUT_COLS="$(tput cols 2>/dev/null)"
+        # Every tput call must tolerate a failure: with "set -e" an assignment
+        # whose command substitution fails aborts the whole script.  This
+        # happens with TERM=dumb, an unknown TERM or a broken terminfo
+        # database — the tool was completely unusable in those cases.
+        TPUT_CUP="$(tput cup 0 0 2>/dev/null || true)"
+        TPUT_CIVIS="$(tput civis 2>/dev/null || true)"
+        TPUT_CNORM="$(tput cnorm 2>/dev/null || true)"
+        TPUT_ED="$(tput ed 2>/dev/null || true)"
+        TPUT_COLS="$(tput cols 2>/dev/null || true)"
+        TPUT_LINES="$(tput lines 2>/dev/null || true)"
         HAS_TPUT=1
     else
         HAS_TPUT=0
         TPUT_COLS=80
+        TPUT_LINES=24
     fi
-    # Update cols on resize, reset border cache
-    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); _LAST_COL_WIDTH=0' WINCH
+    # Fallbacks for terminfo entries that do not exist (dumb terminals)
+    is_uint "${TPUT_COLS:-}" && [ "${TPUT_COLS:-0}" -ge 1 ] || TPUT_COLS=80
+    is_uint "${TPUT_LINES:-}" && [ "${TPUT_LINES:-0}" -ge 1 ] || TPUT_LINES=24
+
+    # Update cols/lines on resize, reset border cache
+    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); TPUT_LINES=$(tput lines 2>/dev/null || echo 24); _LAST_COL_WIDTH=0' WINCH
 
     # Context indicator (git branch, hostname, env)
     init_context
@@ -435,21 +467,18 @@ set_raw_mode() {
 }
 
 drain_stdin() {
-    # Only a terminal can have buffered bytes — on a pipe dd would block until
-    # the writer closes the pipe (hang).
+    # Only a terminal can have buffered bytes — on a pipe head would block
+    # until the writer closes the pipe (hang).
     [ -t 0 ] || return 0
     # Non-blocking drain of any pending stdin bytes (e.g. escape sequence tails
     # or task output left in the buffer). Explicitly disables icanon so this
     # works regardless of the current terminal mode (e.g. after stty sane).
-    # Uses bs=128 to empty buffers with fewer fork iterations.
-    # Restores blocking raw mode (min 1) afterwards.
+    # head -c reads everything that is available with a single fork instead of
+    # one dd fork per 128 byte block.
     stty -icanon min 0 time 0 2>/dev/null || true
-    local _d
-    while true; do
-        _d=$(dd bs=128 count=1 2>/dev/null)
-        [ -z "$_d" ] && break
-    done
+    head -c 4096 >/dev/null 2>&1 || true
     stty min 1 time 0 2>/dev/null || true
+    return 0
 }
 
 # Re-installs the Ctrl+C handler that fits the current context: the menu loop
@@ -491,7 +520,10 @@ read_key() {
     local key=""
     # 1. Read first char (blocking)
     # This relies on the outer loop setting stty to blocking (min 1)
-    if ! read -rsn1 key; then return 1; fi
+    # "IFS=" is mandatory: bash's `read` strips leading/trailing IFS
+    # whitespace, so a space would arrive as an empty string and be
+    # mistaken for Enter (the multi-select toggle was unreachable).
+    if ! IFS= read -rsn1 key; then return 1; fi
 
     # 2. Check for ESC sequence
     if [ "$key" = $'\x1b' ]; then
@@ -516,7 +548,8 @@ read_key() {
 read_key_raw() {
     local key=""
     # 1. Read first char (blocking 1 char, min 1 time 0)
-    if ! read -rsn1 key; then return 1; fi
+    # "IFS=" keeps a space intact — see read_key().
+    if ! IFS= read -rsn1 key; then return 1; fi
 
     # 2. Check for ESC sequence
     if [ "$key" = $'\x1b' ]; then
@@ -533,6 +566,29 @@ read_key_raw() {
         key="${key}${seq}"
     fi
     printf "%s" "$key"
+}
+
+# Reads a single key with a short timeout.
+#
+# Returns an empty string when no key arrives within the timeout.  Used by the
+# tag and favorites menus for the two digit selection: a single digit selects
+# immediately, a second digit (typed quickly) extends the number to 10+.
+#
+# Usage: read_key_optional [timeout-in-tenths-of-a-second]
+read_key_optional() {
+    local _key=""
+    local _prev_stty
+    local _timeout="${1:-2}"
+    _prev_stty=$(stty -g 2>/dev/null || true)
+    # -icanon is required: in canonical mode the read would block until a
+    # whole line is available and the timeout would never trigger.
+    stty -icanon min 0 time "$_timeout" 2>/dev/null || true
+    _key=$(dd bs=1 count=1 2>/dev/null)
+    if [ -n "$_prev_stty" ]; then
+        stty "$_prev_stty" 2>/dev/null || true
+    fi
+    printf "%s" "$_key"
+    return 0
 }
 
 print_ssh_hint() {
@@ -566,13 +622,13 @@ msg() {
                 temp_file_fail) echo "Could not create temporary file." ;;
                 no_hash) echo "No RUN_EXPECTED_SHA256 set. Update without hash check." ;;
                 continue_prompt) echo "Continue? [y/N]" ;;
-                hash_failed) echo "Integrity check failed." ;;
                 hash_mismatch) echo "Integrity check mismatch:" ;;
                 hash_skipped) echo "Warning: sha256sum/shasum not found. Skipping check." ;;
                 update_same) echo "You already have the latest version" ;;
                 update_found) echo "Update found:" ;;
                 install_path_missing) echo "Could not determine install path (run not in PATH)." ;;
                 update_success) echo "Update successful!" ;;
+                update_failed) echo "The update could not be installed." ;;
                 download_error) echo "Failed to download update." ;;
                 config_exists) echo "File already exists." ;;
                 init_header) echo "Initializing Shell Menu Runner..." ;;
@@ -589,32 +645,14 @@ msg() {
                 input_for) echo "Input for:" ;;
                 task_failed) echo "Task failed" ;;
                 task_success) echo "Task successful." ;;
-                task_timeout) echo "Task timeout (killed)" ;;
+                task_cancelled) echo "Cancelled — the task was not executed." ;;
                 task_depends) echo "Running dependencies" ;;
                 press_key) echo "Press any key..." ;;
-                path_label) echo "Path:" ;;
-                filter_label) echo "Filter:" ;;
-                search_label) echo "Search:" ;;
-                hint_nav) echo "[j/k/h/l] Move [Space] Multi" ;;
-                hint_global) echo "[g] Global" ;;
-                hint_local) echo "[g] Local" ;;
-                hint_run) echo "Run" ;;
                 executed_marked) echo "Executed" ;;
                 marked_label) echo "marked" ;;
-                settings_title) echo "Settings" ;;
-                edit_label) echo "Edit" ;;
-                file_browser) echo "File browser" ;;
-                favorites_label) echo "Favorites" ;;
-                settings_theme) echo "Theme" ;;
-                settings_cols_min) echo "Columns min" ;;
-                settings_cols_max) echo "Columns max" ;;
-                settings_lang) echo "Language" ;;
-                settings_scope) echo "Scope" ;;
-                system_control) echo "SYSTEM CONTROL" ;;
-                settings_back) echo "Back" ;;
-                settings_saved) echo "Saved" ;;
-                scope_global) echo "Global" ;;
-                scope_local) echo "Local" ;;
+                recent_tasks) echo "Recent Tasks" ;;
+                logs_title) echo "Recent Logs" ;;
+                no_logs) echo "No log files found." ;;
                 history_label) echo "History" ;;
                 history_empty) echo "No history entries" ;;
                 *) echo "$key" ;;
@@ -627,13 +665,13 @@ msg() {
                 temp_file_fail) echo "Konnte temporäre Datei nicht anlegen." ;;
                 no_hash) echo "Kein RUN_EXPECTED_SHA256 gesetzt. Update ohne Hash-Pruefung." ;;
                 continue_prompt) echo "Fortfahren? [y/N]" ;;
-                hash_failed) echo "Integritaetscheck fehlgeschlagen." ;;
                 hash_mismatch) echo "Integritaetscheck ungueltig:" ;;
                 hash_skipped) echo "Warnung: sha256sum/shasum nicht gefunden. Pruefung uebersprungen." ;;
                 update_same) echo "Du nutzt bereits die neueste Version" ;;
                 update_found) echo "Update gefunden:" ;;
                 install_path_missing) echo "Konnte Installationspfad nicht bestimmen (run nicht im PATH)." ;;
                 update_success) echo "Update erfolgreich!" ;;
+                update_failed) echo "Das Update konnte nicht installiert werden." ;;
                 download_error) echo "Fehler beim Herunterladen des Updates." ;;
                 config_exists) echo "Datei existiert bereits." ;;
                 init_header) echo "Initialisiere Shell Menu Runner..." ;;
@@ -650,32 +688,14 @@ msg() {
                 input_for) echo "Eingabe fuer:" ;;
                 task_failed) echo "Task fehlgeschlagen" ;;
                 task_success) echo "Task erfolgreich." ;;
-                task_timeout) echo "Task Timeout (abgebrochen)" ;;
+                task_cancelled) echo "Abgebrochen — der Task wurde nicht ausgeführt." ;;
                 task_depends) echo "Führe Abhängigkeiten aus" ;;
                 press_key) echo "Taste druecken..." ;;
-                path_label) echo "Pfad:" ;;
-                filter_label) echo "Filter:" ;;
-                search_label) echo "Suche:" ;;
-                hint_nav) echo "[j/k/h/l] Bewegen [Space] Multi" ;;
-                hint_global) echo "[g] Global" ;;
-                hint_local) echo "[g] Lokal" ;;
-                hint_run) echo "Start" ;;
                 executed_marked) echo "Ausgefuehrt" ;;
                 marked_label) echo "markiert" ;;
-                settings_title) echo "Einstellungen" ;;
-                edit_label) echo "Bearbeiten" ;;
-                file_browser) echo "Datei-Browser" ;;
-                favorites_label) echo "Favoriten" ;;
-                settings_theme) echo "Theme" ;;
-                settings_cols_min) echo "Spalten min" ;;
-                settings_cols_max) echo "Spalten max" ;;
-                settings_lang) echo "Sprache" ;;
-                settings_scope) echo "Bereich" ;;
-                system_control) echo "SYSTEM CONTROL" ;;
-                settings_back) echo "Zurueck" ;;
-                settings_saved) echo "Gespeichert" ;;
-                scope_global) echo "Global" ;;
-                scope_local) echo "Lokal" ;;
+                recent_tasks) echo "Zuletzt ausgeführt" ;;
+                logs_title) echo "Letzte Logs" ;;
+                no_logs) echo "Keine Log-Dateien gefunden." ;;
                 history_label) echo "Verlauf" ;;
                 history_empty) echo "Kein Verlaufseintrag vorhanden" ;;
                 *) echo "$key" ;;

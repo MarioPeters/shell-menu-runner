@@ -51,9 +51,9 @@ edit_config_menu() {
                 echo -e "${COLOR_WARN}Preview (first 10 lines):${COLOR_RESET}"
                 head -10 "$tmp_file"
                 echo ""
-                read -p "Replace $file with this content? [y/N] " -n 1 -r
+                read -p "Replace $file with this content? [y/N] " -n 1 -r || true
                 echo ""
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                if [[ "${REPLY:-}" =~ ^[Yy]$ ]]; then
                     mv "$tmp_file" "$file"
                     echo -e "${COLOR_SEL}✔ File updated!${COLOR_RESET}"
                 else
@@ -113,12 +113,16 @@ EOF
                 ;;
             "2")
                 echo -e "\n${COLOR_INFO}Alias name:${COLOR_RESET}"
-                read -r alias_name
+                # Bei EOF setzt "read" die Variable auf "unset" — unter
+                # "set -u" wäre die Prüfung ein Abbruch.
+                local alias_name=""
+                local task_name=""
+                read -r alias_name || true
                 echo -e "${COLOR_INFO}Task name:${COLOR_RESET}"
-                read -r task_name
+                read -r task_name || true
                 # The alias file format is "alias_name=task_name" — an '=' or
                 # whitespace in the alias name would break the parsing.
-                if [ -z "$alias_name" ] || [ -z "$task_name" ] \
+                if [ -z "${alias_name:-}" ] || [ -z "${task_name:-}" ] \
                    || [[ "$alias_name" == *"="* ]] || [[ "$alias_name" == *[[:space:]]* ]]; then
                     echo -e "${COLOR_ERR}Invalid alias name (no '=' or whitespace allowed)${COLOR_RESET}"
                     sleep 1
@@ -205,7 +209,9 @@ settings_menu() {
             "3")
                 echo -e "\n${COLOR_INFO}Column Layout (1-4):${COLOR_RESET}"
                 col_val=$(read_key) || break
-                if [[ "$col_val" =~ [1-4] ]]; then
+                # Verankert: eine Escape-Sequenz, die eine Ziffer enthält
+                # (z.B. "\e[1~"), wäre sonst eine gültige Auswahl.
+                if [[ "$col_val" =~ ^[1-4]$ ]]; then
                     COLS_MIN="$col_val"
                     COLS_MAX="$col_val"
                 fi

@@ -37,9 +37,12 @@ file_browser() {
                 clear
                 echo -e "${COLOR_HEAD}Create New File${COLOR_RESET}"
                 echo -e "${COLOR_INFO}Enter filename:${COLOR_RESET}"
-                read -r filename
-                
-                if [ -z "$filename" ]; then
+                # Bei EOF (Pipe ohne Eingabe) setzt "read" die Variable auf
+                # "unset" — unter "set -u" wäre die Prüfung ein Abbruch.
+                local filename=""
+                read -r filename || true
+
+                if [ -z "${filename:-}" ]; then
                     echo -e "${COLOR_ERR}Filename cannot be empty!${COLOR_RESET}"
                     sleep 1
                     continue
@@ -93,9 +96,10 @@ file_browser() {
                     run_external_editor ".env"
                 else
                     echo -e "\n${COLOR_INFO}Create .env? [y/N]${COLOR_RESET} "
-                    read -n 1 -r REPLY
+                    local reply=""
+                    read -n 1 -r reply || true
                     echo ""
-                    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                    if [[ "${reply:-}" =~ ^[Yy]$ ]]; then
                         touch ".env"
                         run_external_editor ".env"
                     fi
@@ -117,7 +121,9 @@ file_browser() {
                     done
                     echo -e "\n[1-9] Edit [q]uit"
                     fkey=$(read_key) || break
-                    if [[ "$fkey" =~ [1-9] ]]; then
+                    # Verankert: eine Escape-Sequenz, die eine Ziffer enthält
+                    # (z.B. "\e[1~"), wäre sonst eine gültige Auswahl.
+                    if [[ "$fkey" =~ ^[1-9]$ ]]; then
                         local fsel=$((fkey - 1))
                         if [ "$fsel" -lt "${#all_files[@]}" ]; then
                             run_external_editor "${all_files[$fsel]}"

@@ -28,9 +28,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
+      - name: Build from src/
+        run: |
+          # The lint must run on the *generated* script — otherwise changes in
+          # src/ that were not rebuilt would never be checked.
+          bash build.sh
+          chmod +x run.sh
+
       - name: Run ShellCheck
         run: |
-          shellcheck run.sh build.sh install.sh
+          shellcheck -x run.sh build.sh install.sh
 
       - name: Check zsh completion syntax
         run: |
@@ -40,10 +47,20 @@ jobs:
 
       - name: Validate task files
         run: |
+          # "--validate <name>" validates a profile file — the profile name is
+          # the file name without the ".tasks." prefix.
+          status=0
           for tasks_file in docs/examples/*.tasks; do
-            echo "Validating $tasks_file"
-            ./run.sh --config "$tasks_file" --validate || true
+            profile="$(basename "$tasks_file" .tasks)"
+            echo "Validating $tasks_file (profile: $profile)"
+            cp "$tasks_file" ".tasks.$profile"
+            if ! ./run.sh --validate "$profile"; then
+              echo "::error::Validation failed for $tasks_file"
+              status=1
+            fi
+            rm -f ".tasks.$profile"
           done
+          exit $status
 
   # ==============================================================================
   #  TEST
@@ -74,6 +91,14 @@ jobs:
           chmod +x build-platform/tests/test-runner.sh
           chmod +x build.sh run.sh
 
+      - name: Build from src/
+        run: bash build.sh
+
+      - name: Build minified variant
+        run: |
+          bash build.sh --min
+          bash -n run.min.sh
+
       - name: Run test suite
         run: |
           bash build-platform/tests/test-runner.sh
@@ -96,6 +121,9 @@ jobs:
 
     strategy:
       matrix:
+        # "ultra" removed: builder.sh has no such target ("Unknown build
+        # target: ultra", exit 1) — the ultra artifact is built by
+        # optimize.sh, which does not belong into the build matrix.
         target: [dev, prod, minimal]
 
     steps:
@@ -302,6 +330,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     permissions:
+      contents: read        # required by actions/checkout
       security-events: write
 
     steps:
@@ -309,7 +338,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        # Pinned to a released version — "@master" would pull unreviewed code
+        # into the CI (supply chain risk).
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: "fs"
           scan-ref: "."

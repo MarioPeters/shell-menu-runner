@@ -60,10 +60,25 @@ case "${1:-help}" in
         ;;
     
     watch)
+        # "$SCRIPT_DIR/../src" resolves relative to the project layout, not to
+        # the caller's cwd — "../../src/*" pointed one directory too high
+        # (<parent-of-repo>/src, which does not exist) and the glob was
+        # silently unexpanded, so no real change was ever detected.
+        SRC_DIR="$SCRIPT_DIR/../src"
+        if [ ! -d "$SRC_DIR" ]; then
+            echo "watch: $SRC_DIR not found — run this script from the repository layout"
+            exit 1
+        fi
+        if ! command -v fswatch >/dev/null 2>&1 && ! command -v inotifywait >/dev/null 2>&1; then
+            echo "watch: neither fswatch nor inotifywait is available"
+            echo "Install one first (e.g. 'brew install fswatch'), otherwise every watcher falls"
+            echo "through to 'sleep 2' and this loop rebuilds forever regardless of changes."
+            exit 1
+        fi
         echo "Watching for changes..."
         while true; do
-            inotifywait -q -e modify ../../src/*.sh 2>/dev/null || \
-            fswatch -1 ../../src/*.sh 2>/dev/null || \
+            inotifywait -q -e modify "$SRC_DIR"/*.sh 2>/dev/null || \
+            fswatch -1 "$SRC_DIR"/*.sh 2>/dev/null || \
             sleep 2
             
             echo ""

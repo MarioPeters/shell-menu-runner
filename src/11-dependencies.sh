@@ -4,17 +4,29 @@
 
 parse_task_deps() {
     local task_cmd="$1"
-    # Extract [depends: task1,task2] from command
+    local task_desc="${2:-}"
+    # Extract [depends: task1,task2] from the command or from the description
+    #
+    # Both fields are searched: the documentation describes the annotation in
+    # the description ("0|Test|npm test|Run tests [depends: Build]"), the
+    # implementation read it from the command.  A config that follows the
+    # documentation therefore ran the dependency *not*.
     if [[ "$task_cmd" =~ \[depends:([^\]]+)\] ]]; then
         echo "${BASH_REMATCH[1]}"
+        return 0
     fi
+    if [[ "$task_desc" =~ \[depends:([^\]]+)\] ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 0
 }
 
 execute_task_deps() {
     local deps_str="$1"
-    local IFS=','
-    local -a deps
-    read -r -a deps <<< "$deps_str"
+    # IFS-Split ohne Here-String (kein temporäres File, ~130 µs pro Aufruf)
+    split_by_char ',' "$deps_str"
+    local -a deps=("${_SPLIT_ARR[@]}")
 
     echo -e "${COLOR_INFO}$(msg task_depends):${COLOR_RESET}"
 
@@ -27,6 +39,7 @@ execute_task_deps() {
 
         for dep in "${deps[@]}"; do
             dep=$(trim_whitespace "$dep")
+            [ -z "$dep" ] && continue
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
 
             # Log in CACHE_DIR ablegen — wird bei EXIT automatisch bereinigt
@@ -34,11 +47,19 @@ execute_task_deps() {
             dep_logs+=("$dep_log")
             dep_names+=("$dep")
 
-            # Execute in background
+            # Execute in background.  PIPESTATUS[0] carries the real status of
+            # find_task_in_menu — the status of "tee" is always 0 and would
+            # report every failed dependency as success.
+            #
+            # The quiet callback runs the task without any terminal
+            # interaction: a background process must not touch the terminal
+            # of the menu (no preview, no screen clear, no terminal reset
+            # and no "press any key" prompt — the prompt alone deadlocked
+            # the menu, because the dependency waited for a key that the
+            # parent process was waiting for).
             (
-                if ! find_task_in_menu "$dep" '_execute_dep_callback' 2>&1 | tee "$dep_log"; then
-                    exit 1
-                fi
+                find_task_in_menu "$dep" '_execute_dep_callback_quiet' 2>&1 | tee "$dep_log"
+                exit "${PIPESTATUS[0]}"
             ) &
             dep_pids+=("$!")
         done
@@ -60,7 +81,7 @@ execute_task_deps() {
         [ "$all_success" -eq 1 ] && echo -e "${COLOR_SEL}✔ All dependencies completed${COLOR_RESET}"
 
         # Cleanup log files
-        for log in "${dep_logs[@]}"; do
+        for log in "${dep_logs[@]+"${dep_logs[@]}"}"; do
             [ -f "$log" ] && rm -f "$log"
         done
 
@@ -70,11 +91,14 @@ execute_task_deps() {
         # Sequential execution (default)
         for dep in "${deps[@]}"; do
             dep=$(trim_whitespace "$dep")
+            [ -z "$dep" ] && continue
             echo -e "  ${COLOR_DIM}→ $dep${COLOR_RESET}"
 
-            # Find and execute the dependency task using helper
+            # Find and execute the dependency task using helper.
+            # The status of the dependency is propagated: a failed dependency
+            # must stop the dependent task.
             if ! find_task_in_menu "$dep" '_execute_dep_callback'; then
-                echo -e "${COLOR_ERR}❌ Dependency '$dep' not found in:${COLOR_RESET}"
+                echo -e "${COLOR_ERR}❌ Dependency '$dep' failed or not found in:${COLOR_RESET}"
                 if [ ${#task_config_files[@]} -gt 0 ]; then
                     for cf in "${task_config_files[@]}"; do echo -e "  ${COLOR_DIM}$cf${COLOR_RESET}"; done
                 fi
@@ -82,6 +106,7 @@ execute_task_deps() {
             fi
         done
     fi
+    return 0
 }
 
 _execute_dep_callback() {
@@ -91,6 +116,14 @@ _execute_dep_callback() {
     execute_task "$dep_cmd" "$dep_name" "$dep_desc" || return 1
 }
 
+# Quiet variant for the parallel branch — see execute_task_quiet().
+_execute_dep_callback_quiet() {
+    local dep_name="$1"
+    local dep_cmd="$2"
+    local dep_desc="$3"
+    execute_task_quiet "$dep_cmd" "$dep_name" "$dep_desc" || return 1
+}
+
 # ==============================================================================
 #  MULTI-PROFILE EXECUTION
 # ==============================================================================
@@ -98,9 +131,9 @@ _execute_dep_callback() {
 execute_multi_profile_task() {
     local task_name="$1"
     local profiles_str="$2"  # comma-separated
-    local IFS=','
-    local -a profiles
-    read -r -a profiles <<< "$profiles_str"
+    # IFS-Split ohne Here-String (kein temporäres File)
+    split_by_char ',' "$profiles_str"
+    local -a profiles=("${_SPLIT_ARR[@]}")
 
     echo -e "${COLOR_HEAD}Running task across ${#profiles[@]} profiles:${COLOR_RESET}"
 
@@ -154,7 +187,7 @@ execute_multi_profile_task() {
         [ "$all_success" -eq 1 ] && echo -e "${COLOR_SEL}✔ All profiles completed${COLOR_RESET}"
 
         # Cleanup log files
-        for log in "${profile_logs[@]}"; do
+        for log in "${profile_logs[@]+"${profile_logs[@]}"}"; do
             [ -f "$log" ] && rm -f "$log"
         done
 
@@ -217,7 +250,7 @@ analyze_project() {
             /^0\|/                             { l0++ }
             /^1\|/                             { l1++ }
             /depends:/                         { dep++ }
-            /--parallel/                       { par++ }
+            /RUN_PARALLEL_DEPS=1|RUN_PARALLEL_MULTI=1/ { par++ }
             tolower($0) ~ /lint|eslint|pylint/ { lint++ }
             tolower($0) ~ /test|jest|pytest/   { tst++ }
             tolower($0) ~ /build|compile/      { bld++ }
@@ -225,7 +258,13 @@ analyze_project() {
             tolower($0) ~ /test/               { tc++ }
             END { print (tot+0),(l0+0),(l1+0),(dep+0),(par+0),(lint+0),(tst+0),(bld+0),(dpl+0),(tc+0) }
         ' "$config_file" 2>/dev/null
-    )
+    ) || true
+    # Leere Werte (z.B. bei einer nicht lesbaren Config) als 0 behandeln —
+    # sonst wäre der Vergleich "[] -gt 0" ein arithmetischer Fehler.
+    total_tasks="${total_tasks:-0}"; level_0="${level_0:-0}"; level_1="${level_1:-0}"
+    deps_count="${deps_count:-0}"; parallel_count="${parallel_count:-0}"
+    has_lint="${has_lint:-0}"; has_test="${has_test:-0}"; has_build="${has_build:-0}"
+    has_deploy="${has_deploy:-0}"; test_count="${test_count:-0}"
 
     echo -e "\n${COLOR_SEL}📊 Project Analysis${COLOR_RESET}"
     echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
@@ -257,8 +296,8 @@ analyze_project() {
         echo -e "  ${COLOR_INFO}ℹ${COLOR_RESET}  ${COLOR_DIM}No dependencies found:${COLOR_RESET}"
         echo -e "     Consider adding task chains for workflows:"
         echo -e "     ${COLOR_DIM}• 0|Build|npm run build|Build${COLOR_RESET}"
-        echo -e "     ${COLOR_DIM}• 1|Test|npm run test depends:0|Test (after build)${COLOR_RESET}"
-        echo -e "     ${COLOR_DIM}• 2|Deploy|npm deploy depends:1|Deploy (after test)${COLOR_RESET}"
+        echo -e "     ${COLOR_DIM}• 0|Test|npm test|Test [depends: Build]${COLOR_RESET}"
+        echo -e "     ${COLOR_DIM}• 0|Deploy|./deploy.sh|[!] Deploy [depends: Test]${COLOR_RESET}"
         echo ""
     fi
 
@@ -321,22 +360,42 @@ analyze_project() {
 #  TASK EXECUTION HELPERS
 # ==============================================================================
 
+# Set to 1 by find_task_in_menu when the task was found.
+# Needed to distinguish "task not found" (exit 1) from "task failed with
+# exit code 1" — both would otherwise be indistinguishable.
+_TASK_FOUND=0
+
 find_task_in_menu() {
     # Find task by name across all tasks and execute callback.
     # Task format: level|name|cmd|desc — skip level field with _level.
+    #
+    # Return value:
+    #   1 → task not found (see _TASK_FOUND)
+    #   0 → task found and callback succeeded
+    #   N → task found, callback failed with exit code N
+    #
+    # The callback status must be propagated: otherwise a failing dependency
+    # was silently ignored and the dependent task ran anyway.
     local search_name="$1"
     local callback="$2"
     local -a opts=()
-    IFS=$'\n' read -d '' -r -a opts < <(get_all_tasks) || true
+    _TASK_FOUND=0
+    # In-process: the cache of _build_all_tasks() only survives when the
+    # function runs in the current shell.
+    _build_all_tasks
+    opts=("${ALL_TASKS_ARRAY[@]+"${ALL_TASKS_ARRAY[@]}"}")
     # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
     [ ${#opts[@]} -eq 0 ] && return 1
 
+    local _rc=0
     for opt in "${opts[@]}"; do
         split_task_line "$opt"
         if [ "$_f_name" = "$search_name" ]; then
             # Direkter Funktionsaufruf statt eval: schneller und sicherer
+            _TASK_FOUND=1
             "$callback" "$_f_name" "$_f_cmd" "$_f_desc"
-            return 0
+            _rc=$?
+            return "$_rc"
         fi
     done
     return 1
@@ -368,13 +427,13 @@ preview_task() {
 
     # Check for dependencies
     local deps
-    deps=$(parse_task_deps "$cmd")
+    deps=$(parse_task_deps "$cmd" "$desc")
     if [ -n "$deps" ]; then
         echo -e "${COLOR_INFO}Dependencies:${COLOR_RESET}"
-        local IFS=','
-        local -a dep_arr
-        read -r -a dep_arr <<< "$deps"
-        for d in "${dep_arr[@]}"; do
+        split_by_char ',' "$deps"
+        local d
+        for d in "${_SPLIT_ARR[@]}"; do
+            [ -z "$d" ] && continue
             echo -e "  ${COLOR_DIM}→ $d${COLOR_RESET}"
         done
         echo ""

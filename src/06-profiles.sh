@@ -39,6 +39,11 @@ list_available_profiles() {
             local base
             base="${f##*/}"
             base="${base#.tasks.}"
+            # "local" and "dev" are reserved overlay suffixes: they are merged
+            # into the default config automatically (see detect_config_files)
+            # and are therefore not separate profiles.
+            [ "$base" = "local" ] && continue
+            [ "$base" = "dev" ] && continue
             names+=("$base")
         done
         d="${d%/*}"
@@ -49,7 +54,10 @@ list_available_profiles() {
         [ -f "$f" ] || continue
         local base
         base="${f##*/}"
-        names+=("${base#.tasks.}")
+        base="${base#.tasks.}"
+        [ "$base" = "local" ] && continue
+        [ "$base" = "dev" ] && continue
+        names+=("$base")
     done
     if [ ${#names[@]} -gt 0 ]; then
         printf "%s\n" "${names[@]}" | sort -u
@@ -100,18 +108,41 @@ validate_config_file() {
     local line_no=0
     local syntax_ok=true
 
-    while IFS='|' read -r level name cmd desc || [ -n "$level" ]; do
+    while IFS='|' read -r level name cmd desc extra || [ -n "$level" ]; do
         line_no=$((line_no + 1))
-        
+        # Tolerate CRLF line endings
+        level="${level%$'\r'}"
+        name="${name%$'\r'}"
+        cmd="${cmd%$'\r'}"
+        desc="${desc%$'\r'}"
+        extra="${extra%$'\r'}"
+
         # Skip comments and empty lines
         [[ "$level" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$level" ]] && continue
-        
+
         # Validate format
         if [ -z "$name" ] || [ -z "$cmd" ]; then
             echo "  Line $line_no: Invalid format (missing fields)"
             errors=$((errors + 1))
             syntax_ok=false
+        fi
+
+        # Das Level muss eine nicht-negative Zahl sein: das Menü überspringt
+        # jede Zeile mit einem nicht-numerischen Level — der Task wäre
+        # unsichtbar, die Validierung meldete aber "passed".
+        if ! is_uint "$level"; then
+            echo "  Line $line_no: Invalid level '$level' (must be a number)"
+            errors=$((errors + 1))
+            syntax_ok=false
+        fi
+
+        # The format uses "|" as the field separator — a command with a pipe
+        # is cut off at the first separator.  Warning, because the
+        # description may legitimately contain a pipe.
+        if [ -n "$extra" ]; then
+            echo "  Line $line_no: Warning - more than 4 fields"
+            echo "            (a '|' in the command is not supported by the format)"
         fi
     done < "$profile_file"
 
@@ -124,29 +155,42 @@ validate_config_file() {
     fi
 }
 
+# Escapes a string for a JSON string literal (backslash, quote, control chars).
+_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "$s"
+}
+
 list_profiles_all() {
     local mode="${1:-text}"
     local profiles_str
     profiles_str=$(list_available_profiles)
-    
-    if [ -z "$profiles_str" ]; then
-        echo "No profiles found"
-        return 0
-    fi
-    
+
     if [ "$mode" = "json" ]; then
+        # Auch ohne Profile wird gültiges JSON geliefert — "No profiles
+        # found" konnte von einem JSON-Parser nicht gelesen werden.
         echo "{"
         echo "  \"profiles\": ["
         local first=1
         # Process-Substitution statt Here-String (kein temporäres File)
-        while IFS= read -r prof; do
-            [ "$first" -eq 0 ] && echo ","
-            first=0
-            echo "    { \"name\": \"$prof\" }"
-        done < <(printf '%s\n' "$profiles_str")
+        if [ -n "$profiles_str" ]; then
+            while IFS= read -r prof; do
+                [ "$first" -eq 0 ] && echo ","
+                first=0
+                echo "    { \"name\": \"$(_json_escape "$prof")\" }"
+            done < <(printf '%s\n' "$profiles_str")
+        fi
         echo ""
         echo "  ]"
         echo "}"
+    elif [ -z "$profiles_str" ]; then
+        echo "No profiles found"
+        return 0
     else
         echo "Available profiles:"
         echo ""
@@ -154,6 +198,7 @@ list_profiles_all() {
             echo "  • $prof"
         done < <(printf '%s\n' "$profiles_str")
     fi
+    return 0
 }
 
 # ==============================================================================
@@ -162,20 +207,34 @@ list_profiles_all() {
 
 load_profile_config() {
     local profile_name="$1"
-    
+
     # Temporarily change active_mode and config_path
     local saved_mode="$active_mode"
     local saved_config_path="$config_path"
-    
-    active_mode="global"
-    config_path="$HOME/.tasks.$profile_name"
-    
-    if [ ! -f "$config_path" ]; then
+
+    # Lokale Profile zuerst (wie beim CLI-Aufruf "run <profil>"): das Profil
+    # wird im aktuellen Verzeichnis und in allen übergeordneten Verzeichnissen
+    # gesucht.  Vorher wurde ausschließlich $HOME/.tasks.<name> geprüft —
+    # "run --across p1,p2 task" scheiterte dadurch für lokale Profile.
+    local _found=""
+    _found=$(find_named_config "$profile_name") || _found=""
+    if [ -n "$_found" ]; then
+        active_mode="local"
+        config_path="$_found"
+    elif [ -f "$HOME/.tasks.$profile_name" ]; then
+        active_mode="global"
+        config_path="$HOME/.tasks.$profile_name"
+    else
         active_mode="$saved_mode"
         config_path="$saved_config_path"
         return 1
     fi
-    
+
+    # The task list comes from task_config_files — it has to be rebuilt for
+    # the new profile, otherwise the task would be searched in the config of
+    # the previous one.
+    detect_config_files
+
     return 0
 }
 
@@ -192,6 +251,7 @@ validate_profile() {
 select_profile_menu() {
     local -a profiles=()
     local -a filtered_profiles=()
+    local -a display_profiles=()
     IFS=$'\n' read -r -d '' -a profiles < <(list_available_profiles && printf '\0') || true
     local num=${#profiles[@]}
     [ "$num" -eq 0 ] && return 1
@@ -211,11 +271,13 @@ select_profile_menu() {
                     filtered_profiles+=("$prof")
                 fi
             done
-            local display_profiles=("${filtered_profiles[@]}")
-            local display_num=${#display_profiles[@]}
+            # "[@]+" keeps an empty array safe under `set -u` on Bash 3.2 —
+            # without it a filter without a match aborted the whole runner.
+            display_profiles=("${filtered_profiles[@]+"${filtered_profiles[@]}"}")
+            display_num=${#display_profiles[@]}
         else
-            local display_profiles=("${profiles[@]}")
-            local display_num=${#display_profiles[@]}
+            display_profiles=("${profiles[@]}")
+            display_num=${#display_profiles[@]}
         fi
         
         # Reset page if out of bounds
@@ -273,8 +335,10 @@ select_profile_menu() {
                 ;;
             0) return 1 ;;
             q|Q) return 1 ;;
-            p) [ "$page" -gt 0 ] && page=$((page - 1)) ;;
-            n) [ "$end" -lt "$display_num" ] && page=$((page + 1)) ;;
+            # if/else instead of "&&": a false condition would return 1 from
+            # the case and abort the script (set -e).
+            p) if [ "$page" -gt 0 ]; then page=$((page - 1)); fi ;;
+            n) if [ "$end" -lt "$display_num" ]; then page=$((page + 1)); fi ;;
             /) filter_active=1; filter_pattern=""; 
                while true; do
                    clear
@@ -287,7 +351,7 @@ select_profile_menu() {
                        $'\x1b') filter_active=0; filter_pattern=""; break ;;
                        $'\x7f'|$'\b') filter_pattern="${filter_pattern%?}" ;;
                        $'\r'|$'\n'|"") break ;;
-                       *) [[ "$k" =~ [[:print:]] ]] && filter_pattern="${filter_pattern}${k}" ;;
+                       *) if [[ "$k" =~ [[:print:]] ]]; then filter_pattern="${filter_pattern}${k}"; fi ;;
                    esac
                done
                page=0

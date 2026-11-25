@@ -35,36 +35,86 @@ self_update() {
                 fi
             else
                 echo -e "${COLOR_WARN}$(msg no_hash)${COLOR_RESET}"
-                read -p "$(msg continue_prompt) " -n 1 -r; echo ""
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                read -p "$(msg continue_prompt) " -n 1 -r || true; echo ""
+                if [[ ! "${REPLY:-}" =~ ^[Yy]$ ]]; then
                     rm -f "$tmp_file"
                     return 1
                 fi
             fi
             local install_path
-            install_path=$(command -v run)
+            # "|| install_path=''": eine fehlgeschlagene Zuweisung (fehlendes
+            # "run" auf dem PATH) bricht unter "set -e" sonst das Skript ab,
+            # BEVOR die darunter stehende Fehlermeldung eine Chance hat —
+            # der Update-Flow endete dann stumm ohne jeden Hinweis.
+            install_path=$(command -v run 2>/dev/null) || install_path=""
             if [ -z "$install_path" ]; then
                 echo -e "${COLOR_ERR}$(msg install_path_missing)${COLOR_RESET}"
                 rm -f "$tmp_file"
                 return 1
             fi
+            # "command -v" liefert bei einer Shell-Funktion oder einem Alias
+            # nur den Namen ("run") — das wäre ein relatives Ziel im
+            # aktuellen Verzeichnis.  Nur ein absoluter Pfad ist gültig.
+            case "$install_path" in
+                /*) ;;
+                *)
+                    echo -e "${COLOR_ERR}$(msg install_path_missing)${COLOR_RESET}"
+                    rm -f "$tmp_file"
+                    return 1
+                    ;;
+            esac
+            local _install_failed=0
             if [ -w "$install_path" ]; then
-                mv "$tmp_file" "$install_path" && chmod +x "$install_path"
+                mv "$tmp_file" "$install_path" && chmod +x "$install_path" || _install_failed=1
             else
-                sudo mv "$tmp_file" "$install_path" && sudo chmod +x "$install_path"
+                sudo mv "$tmp_file" "$install_path" && sudo chmod +x "$install_path" || _install_failed=1
+            fi
+            # Ein fehlgeschlagener Installationsschritt darf NICHT als Erfolg
+            # gemeldet werden (vorher stand hier "✔ Update erfolgreich", auch
+            # wenn das sudo fehlschlug).
+            if [ "$_install_failed" -ne 0 ]; then
+                echo -e "${COLOR_ERR}$(msg update_failed)${COLOR_RESET}"
+                rm -f "$tmp_file"
+                return 1
             fi
             echo -e "${COLOR_SEL}✔ $(msg update_success) $new_ver${COLOR_RESET}"
             command -v run >/dev/null 2>&1 && echo -e "${COLOR_INFO}Aktuelle Version:${COLOR_RESET} $(run --version 2>/dev/null)"
+            return 0
         fi
     else
         echo -e "${COLOR_ERR}$(msg download_error)${COLOR_RESET}"
         rm -f "$tmp_file"
+        return 1
     fi
 }
 
 # ==============================================================================
 #  SMART INIT (AUTO-DETECTION)
 # ==============================================================================
+
+# Extracts the script names from a package.json.
+#
+# jq is used when available; the awk fallback counts the key lines of the
+# "scripts" object.  The previous implementation ("sed -n '/"scripts": {/,/}/p'")
+# picked up the container key itself ("npm scripts") and stopped at the first
+# "}" — a script value containing a brace truncated the whole list.
+_package_json_scripts() {
+    local file="$1"
+    if command -v jq >/dev/null 2>&1; then
+        jq -r '(.scripts // {}) | keys[]' "$file" 2>/dev/null
+        return 0
+    fi
+    awk '
+        /"scripts"[[:space:]]*:[[:space:]]*\{/ { in_scripts = 1; next }
+        in_scripts && /^[[:space:]]*\}/ { in_scripts = 0; next }
+        in_scripts && match($0, /^[[:space:]]*"[^"]+"[[:space:]]*:/) {
+            key = substr($0, RSTART, RLENGTH)
+            sub(/^[[:space:]]*"/, "", key)
+            sub(/".*/, "", key)
+            print key
+        }
+    ' "$file" 2>/dev/null
+}
 
 smart_init() {
     local mode="$1"
@@ -132,7 +182,7 @@ EOF
         if [ -f "package.json" ]; then
             echo -e "${COLOR_INFO}→ $(msg node_detected)${COLOR_RESET}"
             local scripts
-            scripts=$(sed -n '/"scripts": {/,/}/p' package.json | _grep ":" | sed 's/^[[:space:]]*"//; s/":.*//' || true)
+            scripts=$(_package_json_scripts "package.json")
             for s in $scripts; do
                 echo "0|📦 npm $s|npm run $s|Aus package.json" >> "$target"
             done
@@ -264,6 +314,8 @@ while [[ $# -gt 0 ]]; do
                 echo "  run --analyze [profile]  Show analysis & improvement suggestions"
                 echo ""
                 echo "Other:"
+                echo "  run --help, -h          Show this help"
+                echo "  run --version, -v       Show version"
                 echo "  run --init              Initialize .tasks in current dir"
                 echo "  run --global            Switch to global mode"
                 echo "  run --edit, -e          Edit config file"
@@ -282,9 +334,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --across)
             shift
+            if [ $# -lt 2 ]; then
+                echo "Usage: run --across <profile1,profile2> <task>" >&2
+                exit 1
+            fi
             multi_profiles="$1"
             shift
             multi_task="$1"
+            shift
             execute_multi_profile_task "$multi_task" "$multi_profiles"
             exit $?
             ;;
@@ -300,8 +357,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --init-profile)
             shift
-            init_profile "$1"
-            exit 0
+            # "${1:-}": ohne Argument wäre "$1" eine ungebundene Variable —
+            # der Fehler endete mit Exit-Code 0 (der EXIT-Trap verwirft den
+            # Status) und die Meldung war für den Nutzer unverständlich.
+            init_profile "${1:-}"
+            exit $?
             ;;
         --validate)
             shift
@@ -320,23 +380,43 @@ while [[ $# -gt 0 ]]; do
             exit $?
             ;;
         --analyze)
+            shift
             analyze_project "$@"
             exit 0
             ;;
         --update)
+            # Der Rückgabewert von self_update wird durchgereicht — ein
+            # fehlgeschlagenes Update darf nicht mit Exit 0 enden.
             self_update
-            exit 0
+            exit $?
             ;;
         --global)
             active_mode="global"
             config_path="$GLOBAL_CONFIG"
             if [ ! -f "$config_path" ]; then
-                smart_init "global" && exit 0
+                if smart_init "global"; then
+                    exit 0
+                fi
             fi
+            # The flag is consumed in any case — otherwise it would end up in
+            # the profile list and be treated as a profile name.
             shift
             ;;
         --edit|-e)
-            [ -z "$config_path" ] && config_path="$LOCAL_CONFIG"
+            # Der Config-Pfad wird erst nach der Argument-Auswertung
+            # aufgelöst — hier muss derselbe Pfad wie im Menü verwendet
+            # werden.  Sonst öffnete der Editor in einem Unterverzeichnis
+            # eine neue (nicht existierende) ".tasks" statt der Config,
+            # die der Runner tatsächlich verwendet.
+            if [ -z "$config_path" ]; then
+                if [ "$active_mode" = "global" ]; then
+                    config_path="$GLOBAL_CONFIG"
+                elif found=$(find_local_config); then
+                    config_path="$found"
+                else
+                    config_path="$LOCAL_CONFIG"
+                fi
+            fi
             # Terminal-Snapshot, damit der Editor-Zustand danach wiederhergestellt
             # werden kann (läuft vor check_interactive)
             save_terminal_state
@@ -362,6 +442,17 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
+            # Ein unbekanntes Flag ist ein Tippfehler, kein Profilname —
+            # ein Profilname darf nicht mit einem Bindestrich beginnen.
+            # Vorher wurde "--foo" als Profilname interpretiert und der
+            # Runner startete normal ("Profile '--foo' not found").
+            case "$1" in
+                -*)
+                    echo "Error: unknown option '$1'" >&2
+                    echo "Run 'run --help' for the list of options." >&2
+                    exit 1
+                    ;;
+            esac
             args+=("$1")
             shift
             ;;
@@ -386,6 +477,8 @@ fi
 # Profile selection on startup was removed — use [p] in the menu instead.
 
 set +u  # Disable nounset for array check
+# Name des Alias-Ziels, das ein Task sein könnte (siehe _alias_task).
+_alias_task=""
 if [ "${#args[@]}" -gt 0 ]; then
     set -u  # Re-enable nounset
     load_aliases
@@ -398,6 +491,11 @@ if [ "${#args[@]}" -gt 0 ]; then
     elif [ -f "$HOME/.tasks.$profile" ]; then
         active_mode="global"
         config_path="$HOME/.tasks.$profile"
+    elif [ "$profile" != "$profile_input" ]; then
+        # Der Alias zeigt nicht auf ein Profil, sondern auf einen Task-Namen
+        # (das Alias-File-Template dokumentiert "alias=task_name").  Der
+        # Task wird später aus der Standard-Config ausgeführt.
+        _alias_task="$profile"
     else
         echo -e "${COLOR_WARN}Profile '$profile' not found. Using default config.${COLOR_RESET}"
         profiles_list=$(list_available_profiles)
@@ -422,8 +520,15 @@ if [ -z "$config_path" ]; then
     fi
 fi
 
+# Global variables from ~/.run_vars are loaded before the config so that the
+# VAR_* entries of the config can overwrite them.
+load_global_vars
+
 parse_config_vars
 load_settings
+# The theme from .runrc / the config file was never applied before — the
+# colours were only changed when the settings menu was opened.
+apply_theme
 load_state
 # Ensure selected_index is initialized
 selected_index="${selected_index:-0}"
@@ -450,18 +555,30 @@ fi
 
 # CLI mode dispatch
 if [ "${cli_list_mode:-0}" -eq 1 ]; then
-    IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    _build_all_tasks
+    menu_options=("${ALL_TASKS_ARRAY[@]+"${ALL_TASKS_ARRAY[@]}"}")
     cli_list_tasks
     exit 0
 fi
+# An alias that points to a task name (not to a profile) executes the task
+# from the current config — the alias file template documents exactly that
+# ("alias_name=actual_task_name").
+if [ -n "$_alias_task" ]; then
+    _build_all_tasks
+    menu_options=("${ALL_TASKS_ARRAY[@]+"${ALL_TASKS_ARRAY[@]}"}")
+    cli_run_task "$_alias_task"
+    exit $?
+fi
 if [ -n "${cli_run_query:-}" ]; then
-    IFS=$'\n' read -d '' -r -a menu_options < <(get_all_tasks) || true
+    _build_all_tasks
+    menu_options=("${ALL_TASKS_ARRAY[@]+"${ALL_TASKS_ARRAY[@]}"}")
     cli_run_task "$cli_run_query"
     exit $?
 fi
 
 # Load menu options once before loop
-IFS=$'\n' read -d '' -r -a menu_options < <(get_menu_options) || true
+_build_menu_options
+menu_options=("${MENU_RESULT_ARRAY[@]+"${MENU_RESULT_ARRAY[@]}"}")
 num=${#menu_options[@]}
 calculate_layout "$num"; rows=$_layout_rows; cols=$_layout_cols
 redraw_needed=1

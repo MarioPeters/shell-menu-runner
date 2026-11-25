@@ -11,6 +11,9 @@
 # Build platform directory
 BP := build-platform
 
+# Build cache directory (must match BP_CACHE_DIR in build-platform/builder.sh)
+BP_CACHE_DIR := .build-cache
+
 # Builder script
 BUILDER := $(BP)/builder.sh
 
@@ -58,7 +61,8 @@ build: prod ## Alias for 'make prod'
 test: ## Run test suite
 	@bash $(BUILDER) test
 
-lint: ## Run shellcheck linter
+lint: ## Rebuild run.sh and run shellcheck
+	@bash build.sh
 	@bash $(BUILDER) lint
 
 check: test lint ## Run all checks

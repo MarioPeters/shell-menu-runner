@@ -46,8 +46,9 @@ SPINNER_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 show_spinner() {
     local message="$1"
     local delay=0.1
-    # Gecachte tput-Variable nutzen statt direktem tput-Aufruf zur Laufzeit
-    if [ -n "${TPUT_CIVIS:-}" ]; then echo -ne "$TPUT_CIVIS"; else tput civis 2>/dev/null; fi
+    # Gecachte tput-Variable nutzen statt direktem tput-Aufruf zur Laufzeit.
+    # "|| true": ein fehlgeschlagener tput darf das Skript nicht beenden.
+    if [ -n "${TPUT_CIVIS:-}" ]; then echo -ne "$TPUT_CIVIS"; else tput civis 2>/dev/null || true; fi
     (
         local i=0
         while true; do
@@ -70,21 +71,6 @@ stop_spinner() {
         SPINNER_PID=""
         printf "\r%80s\r" " "  # Clear spinner line
         # Gecachte tput-Variable nutzen
-        if [ -n "${TPUT_CNORM:-}" ]; then echo -ne "$TPUT_CNORM"; else tput cnorm 2>/dev/null; fi
+        if [ -n "${TPUT_CNORM:-}" ]; then echo -ne "$TPUT_CNORM"; else tput cnorm 2>/dev/null || true; fi
     fi
-}
-
-render_status_bar() {
-    local text="$1"
-    local bar_width=60
-    local padding=$(( (bar_width - ${#text}) / 2 ))
-    local left_pad right_pad
-    # printf -v vermeidet Subshell-Overhead gegenüber $(printf ...)
-    printf -v left_pad  '%*s' "$padding" ''
-    printf -v right_pad '%*s' "$((bar_width - ${#text} - padding))" ''
-    # Rahmen-String einmalig berechnen und global cachen (Lazy Init)
-    : "${_STATUS_BAR_BORDER:=$(printf '═%.0s' {1..60})}"
-    echo -e "${COLOR_DIM}╔${_STATUS_BAR_BORDER}╗${COLOR_RESET}"
-    echo -e "${COLOR_DIM}║${left_pad}${COLOR_RESET}${text}${COLOR_DIM}${right_pad}║${COLOR_RESET}"
-    echo -e "${COLOR_DIM}╚${_STATUS_BAR_BORDER}╝${COLOR_RESET}"
 }

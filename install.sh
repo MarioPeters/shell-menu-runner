@@ -1,5 +1,7 @@
 #!/bin/bash
 # MAGIC INSTALLER v1.6.0
+set -uo pipefail
+
 REPO_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/run.sh"
 COMPLETION_URL="https://raw.githubusercontent.com/MarioPeters/shell-menu-runner/main/completions/_run"
 SCRIPT_NAME="run"
@@ -7,16 +9,25 @@ GREEN='\033[0;32m'; BLUE='\033[0;34m'; NC='\033[0m'
 say() { printf "%b\n" "$*"; }
 
 ZSHRC_MODE="auto"  # auto | skip
+TEMPLATES_MODE="auto"  # auto | skip
 
 for arg in "$@"; do
 	case "$arg" in
 		--no-zshrc)
 			ZSHRC_MODE="skip"
 			;;
+		--no-templates)
+			TEMPLATES_MODE="skip"
+			;;
 		*)
 			;;
 	esac
 done
+
+if ! command -v curl >/dev/null 2>&1; then
+	say "${BLUE}Hinweis:${NC} curl wird benoetigt, um den Runner zu installieren."
+	exit 1
+fi
 
 TARGET_DIR="/usr/local/bin"
 if [ ! -w "$TARGET_DIR" ]; then
@@ -24,13 +35,44 @@ if [ ! -w "$TARGET_DIR" ]; then
 	mkdir -p "$TARGET_DIR"
 fi
 
+# Calculates the SHA256 of a file (sha256sum or shasum, macOS compatible).
+file_sha256() {
+	local f="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$f" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$f" | awk '{print $1}'
+	else
+		return 1
+	fi
+}
+
 install_runner() {
 	local target_dir="$1"
+	local tmp
+	tmp="$(mktemp "${TMPDIR:-/tmp}/run-install.XXXXXX")" || return 1
+
+	if ! curl -fsSL "$REPO_URL" -o "$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+
+	# Optional integrity check — same mechanism as "run --update".
+	if [ -n "${RUN_EXPECTED_SHA256:-}" ]; then
+		local dl_hash
+		dl_hash="$(file_sha256 "$tmp" || true)"
+		if [ -n "$dl_hash" ] && [ "$dl_hash" != "$RUN_EXPECTED_SHA256" ]; then
+			say "${BLUE}Hinweis:${NC} Integritaetscheck fehlgeschlagen: $dl_hash != $RUN_EXPECTED_SHA256"
+			rm -f "$tmp"
+			return 1
+		fi
+	fi
+
 	if [ -w "$target_dir" ]; then
-		curl -fsSL "$REPO_URL" -o "$target_dir/$SCRIPT_NAME"
+		mv "$tmp" "$target_dir/$SCRIPT_NAME" || { rm -f "$tmp"; return 1; }
 		chmod +x "$target_dir/$SCRIPT_NAME"
 	else
-		sudo curl -fsSL "$REPO_URL" -o "$target_dir/$SCRIPT_NAME"
+		sudo mv "$tmp" "$target_dir/$SCRIPT_NAME" || { rm -f "$tmp"; return 1; }
 		sudo chmod +x "$target_dir/$SCRIPT_NAME"
 	fi
 }
@@ -102,6 +144,9 @@ if command -v zsh >/dev/null 2>&1; then
 fi
 
 # Install default profile templates
+if [ "$TEMPLATES_MODE" = "skip" ]; then
+	say "${BLUE}Hinweis:${NC} Profil-Templates wurden uebersprungen (--no-templates)."
+else
 echo -e "\n${BLUE}Installing default profile templates...${NC}"
 mkdir -p "$HOME"
 if [ ! -f "$HOME/.tasks.git" ]; then
@@ -294,7 +339,7 @@ if [ ! -f "$HOME/.tasks.maint" ]; then
 # Shell Menu Runner Maintenance Tasks
 # TITLE: MAINTENANCE
 0|📨 Mails|sudo exim -bp|Show mail queue
-0|📨 Remove Mails|sudo exim -bp | awk '{print $3}' | xargs -r sudo exim -Mrm|Clear mail queue [!]
+0|📨 Remove Mails|sudo awk '{print $2}' /var/spool/exim4/input/ 2>/dev/null > /tmp/smrq.ids && sudo xargs sudo exim -Mrm < /tmp/smrq.ids|Clear mail queue [!]
 0|💾 Clean Disk|sudo apt autoremove -y && sudo apt clean -y && docker system prune -a -f|Full cleanup [!]
 0|🗑️  Logs Rotate|sudo logrotate -f /etc/logrotate.conf|Rotate logs [!]
 0|🧹 Old Logs|find /var/log -name "*.log.*" -mtime +30 -delete|Delete logs >30d [!]
@@ -316,7 +361,7 @@ if [ ! -f "$HOME/.tasks.monitor" ]; then
 0|🔔 Alerts|curl http://localhost:9093/api/v1/alerts|Show Alertmanager alerts
 0|📈 Grafana Dash|open http://localhost:3000|Open Grafana [!]
 0|❤️  Health|curl http://localhost:9090/-/healthy && curl http://localhost:9093/-/healthy|Health checks
-0|🔍 Node Metrics|curl http://localhost:9100/metrics | grep node_|Node exporter metrics
+0|🔍 Node Metrics|curl -s http://localhost:9100/metrics -o /tmp/node_metrics.prom && grep node_ /tmp/node_metrics.prom|Node exporter metrics
 0|📝 Check Alert|grep -r "<<Alert>>" /etc/prometheus/alert.rules|Search alert rule
 0|❌ Exit|EXIT|Back
 EOF
@@ -408,7 +453,7 @@ if [ ! -f "$HOME/.tasks.sec" ]; then
 # TITLE: SECURITY
 0|🔒 Trivy Scan|trivy image "<<Image>>"|Scan Docker image for vulnerabilities
 0|🔓 Snyk Test|snyk test --severity-threshold=high|Check dependencies for vulns
-0|🔐 SSL Check|echo | openssl s_client -servername "<<Domain>>" -connect "<<Domain>>:443"|Check SSL certificate
+0|🔐 SSL Check|openssl s_client -servername "<<Domain>>" -connect "<<Domain>>:443" < /dev/null|Check SSL certificate
 0|📋 OWASP|npx npm-audit --json|OWASP dependency check
 0|🔑 Vault Seal|vault operator seal|Seal Vault [!]
 0|🔓 Vault Unseal|vault operator unseal "<<Key>>"|Unseal Vault
@@ -429,7 +474,7 @@ if [ ! -f "$HOME/.tasks.build" ]; then
 0|📋 Build Info|npm run build -- --verbose|Build with verbose output
 0|🐳 Docker Build|docker build -t "<<Registry>>/<<Image>>:<<Tag>>" .|Build Docker image
 0|⬆️  Docker Push|docker push "<<Registry>>/<<Image>>:<<Tag>>"|Push to registry [!]
-0|🔖 Version Bump|npm version "<<major|minor|patch>>"|Bump version
+0|🔖 Version Bump|npm version "<<Bump:major,minor,patch>>"|Bump version
 0|📝 Changelog|conventional-changelog -p angular -i CHANGELOG.md -s|Generate changelog
 0|🏷️  Tag Release|git tag -a "v<<Version>>" -m "Release v<<Version>>"  && git push --tags|Create git tag
 0|📦 Create Release|gh release create "v<<Version>>" --generate-notes|Create GitHub release [!]
@@ -438,6 +483,7 @@ EOF
 	echo -e "${GREEN}✔ ~/.tasks.build created${NC}"
 else
 	echo -e "${BLUE}Hinweis:${NC} ~/.tasks.build exists (skipped)"
+fi
 fi
 
 echo -e "\n${GREEN}=== Installation komplett! ===${NC}"

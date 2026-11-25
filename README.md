@@ -49,20 +49,20 @@ Version 2.1.3 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 **5) 🛡 Safety & Control**
 
 - **Confirmation:** `[!]` in the description forces an explicit confirmation.
-- **Multi-Select (UI):** Mark items with Space (execution remains single-item).
+- **Multi-Select (UI):** Mark items with Space, then start them with Enter (sequential) — with `RUN_PARALLEL_MULTI=1` they run in parallel.
 
 **6) 📝 Task Dependencies & History**
 
 - **Dependencies:** Use `[depends: task1,task2]` to automatically execute prerequisite tasks.
 - **Task History:** Press `!` to view execution history with status & timing.
-- **Timeout Protection:** Tasks with long runtime are automatically killed after 5 min (configurable via `TIMEOUT=`). Works on macOS without GNU coreutils — and `Ctrl+C` always stops a running task.
+- **Timeout Protection:** Tasks with long runtime are automatically killed after 5 min (configurable globally via `TIMEOUT=` or per task via `[timeout: N]`). Works on macOS without GNU coreutils — and `Ctrl+C` always stops a running task.
 - **Performance Stats:** Each task shows execution time for optimization insights.
 
 **7) 🎨 UI & UX**
 
 - **Themes:** CYBER (cyan/magenta) / MONO (minimal grayscale) / DARK (bright colors on dark) / LIGHT (softer colors for light terminals) via `# THEME:`.
 - **Unicode-Safe Layout:** Task names with CJK characters, emoji or accents are measured in terminal columns (2 per wide glyph) — the boxes stay aligned and long names are truncated without breaking a character.
-- **Status Bar:** Top bar displays time, mode (local/global), active profile, and current filters.
+- **Status Bar:** Top bar displays the version, the mode (local/global) and the active profile.
 - **Loading Indicator:** Animated spinner shows progress during parallel dependency execution.
 - **Settings Menu:** Press `s` to configure theme, columns, and language (stored in `.runrc`).
 - **Live Filter:** Press `/` to filter by name.
@@ -80,8 +80,8 @@ Version 2.1.3 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 **8) 📁 File Browser**
 
 - **Browse Files:** Press `[f]` to browse and edit any file in your project directory.
-- **Quick Edit:** Select priority files first (`.tasks`, `.tasks.local`, `.tasks.dev`, `.env`, `.runrc`, `README.md`).
-- **Create New:** Press `[c]` to create new config files instantly.
+- **Quick Edit:** Select priority files first (`.tasks`, `.env`, `README.md`, `package.json`, `docker-compose.yml`).
+- **Create New:** Press `1` to create a new file (open in editor or paste content).
 - **View & Edit:** Choose which file to view or edit with full content paste support.
 
 **9) 🏷 Task Tags**
@@ -91,20 +91,22 @@ Version 2.1.3 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 - **Multiple Tags:** Each task can have multiple tags separated by spaces.
 - **Tag Examples:** Common tags include `#deployment`, `#testing`, `#backend`, `#frontend`, `#documentation`.
 - **Live Filtering:** Menu updates instantly to show only tasks with selected tag.
-- **Clear Filter:** Press `[#]` and select "(all)" to see all tasks again.
+- **Clear Filter:** Press `[#]` and select `0) [All Tasks]` to see all tasks again.
 
 **10) ⭐ Task Favorites**
 
 - **Add to Favorites:** Press `[*]` on any task to toggle favorite status.
 - **View Favorites:** Press `[r]` to open the favorites menu.
 - **Quick Execute:** Run frequently-used tasks directly from the favorites list.
+- **Two-digit selection:** With more than nine entries, type both digits
+  (e.g. `12`) — the second digit is collected within 0.5 s.
 - **Persistent:** Favorites are saved in `~/.run_favorites` (one per line).
 
 **11) 🔌 Integrations**
 
 - **Zsh Widget:** Open the menu with `Ctrl+O`.
 - **Zsh Completion:** Auto-complete task names with `<TAB>` (installed automatically).
-- **Multi-Config:** Merge `~/.tasks`, `.tasks.local`, `.tasks.dev` for flexible task organization.
+- **Multi-Config:** Combine `.tasks` with the additive `.tasks.local` / `.tasks.dev` overlays for flexible task organization.
 - **Raycast & Alfred:** macOS integrations via scripts in `integrations/`.
 - **SSH/Remote:** Full SSH support with auto-detection (use `ssh -t` for interactive mode).
 
@@ -120,7 +122,7 @@ Version 2.1.3 (Task Tags & Shell Completion). Zero config, Zero dependencies. Ru
 - **Magic Installer:** One-liner installer via `install.sh`.
 - **Integrity Check (optional):** Set `RUN_EXPECTED_SHA256=<hash>` before `run --update` to verify the downloaded script.
 - Without `RUN_EXPECTED_SHA256`, `run --update` asks for confirmation before applying the download.
-- Recommended hash for v2.1.3: 0f7f95639098469eacf751dee2277923ceefdcbf4cfadc693955fccaf553b1e3
+- The expected hash is the SHA256 of the downloaded `run.sh`; compare it with the release checksum.
 
 **14) 🔒 Security Notes**
 
@@ -166,7 +168,7 @@ VAR_PORT=8080
 **Task Features:**
 
 - **Dependencies:** `[depends: task1,task2]` – Auto-runs prerequisites
-- **Timeout:** `[timeout: 60]` – Override task timeout (seconds, max 600)
+- **Timeout:** `[timeout: 60]` – Override task timeout (seconds, no upper limit)
 - **Confirmation:** `[!]` – Requires explicit confirmation before execution
 - **Variables:** `VAR_NAME=value` – Defined at file top, used as `$VAR_NAME` in commands
 - **Inputs:** `<<VariableName>>` – Get prompted at runtime
@@ -230,7 +232,7 @@ Aliases are supported via `~/.run_aliases` (e.g. `g=git`, `srv=server`, `ngx=ngi
 **Profile Management Commands:**
 
 ```bash
-# List all profiles (with file locations and task counts)
+# List all profile names
 run --list-profiles
 
 # List profiles in JSON format (for CI/scripting)
@@ -265,11 +267,11 @@ Boost performance for large configs or many profiles via environment variables:
 # Enable parallel dependency execution (independent deps run concurrently)
 export RUN_PARALLEL_DEPS=1
 
-# Cache profile listings (60s TTL, speeds up profile switching)
-export RUN_CACHE_PROFILES=1  # default: enabled
+# Run the marked tasks (multi-select) in parallel
+export RUN_PARALLEL_MULTI=1
 
-# Optimized grep for large configs
-export RUN_FAST_GREP=1  # default: enabled
+# Cache the parsed task list (default: enabled)
+export RUN_CACHE_PROFILES=1
 ```
 
 **Usage:**
@@ -285,8 +287,8 @@ echo 'export RUN_PARALLEL_DEPS=1' >> ~/.zshrc
 **Performance Gains:**
 
 - **Parallel deps**: 2-5x faster when tasks have multiple independent dependencies
-- **Profile cache**: ~50ms faster profile selection menu
-- **Fast grep**: ~30% faster on configs with 100+ tasks
+- **Menu cache**: the parsed task list is reused while the config file is unchanged
+- **Viewport**: only the rows that fit on the screen are drawn — large configs stay responsive
 
 ### 🔌 Integrations
 
@@ -322,21 +324,27 @@ Press `Ctrl+O` to open the menu instantly (setup by installer).
 Press `[f]` in the main menu to browse and edit project files:
 
 ```
-📁 File Browser
-Directory: /path/to/project
-─────────────────────────────────────
-1) .tasks (exists)
-2) .tasks.local (exists)
-3) package.json
-4) Dockerfile
-5) README.md
+File Browser
+Current directory: /path/to/project
 
-[1-9] Edit  [c]reate new  [q]uit
+Priority Files:
+  - .tasks
+  - .env
+  - README.md
+  - package.json
+  - docker-compose.yml
+
+1) Create new file
+2) Edit .tasks
+3) Edit .env
+4) Browse all files
+0) Back
 ```
 
-- **[1-9]** to select and edit a file with the config editor (paste-mode support)
-- **[c]** to create a new file (prompted for filename, then paste content)
-- **[q]** or Escape to return to main menu
+- **`1`** creates a new file (open in editor or paste content)
+- **`2` / `3`** open `.tasks` or `.env` directly
+- **`4`** lists up to nine files from the current tree; `1-9` edits one
+- **`0`** or Escape returns to the main menu
 
 #### SSH / Remote Servers
 
@@ -411,7 +419,7 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 - **Python:** Erkennt `manage.py` (Django) oder `main.py` und erstellt Start-Tasks.
 - **Weitere Stacks:** Go, Rust, Java (Maven/Gradle), PHP (Composer), Ruby (Bundler), Makefile, Poetry, Pipenv, pnpm, bun, Terraform.
 - **Git/Docker-Profile:** In Git/Docker-Repos werden `.tasks.git` und `.tasks.docker` angelegt (Aufruf: `run git`, `run docker`).
-- **Install-Templates:** Der Installer legt `~/.tasks.git`, `~/.tasks.docker`, `~/.tasks.k8s`, `~/.tasks.deploy`, `~/.tasks.db` und `~/.tasks.devops` an, falls sie fehlen.
+- **Install-Templates:** Der Installer legt 18 Profile an, falls sie fehlen: `~/.tasks.git`, `~/.tasks.docker`, `~/.tasks.k8s`, `~/.tasks.deploy`, `~/.tasks.db`, `~/.tasks.devops`, `~/.tasks.server`, `~/.tasks.nginx`, `~/.tasks.portainer`, `~/.tasks.mailcow`, `~/.tasks.maint`, `~/.tasks.monitor`, `~/.tasks.ci`, `~/.tasks.aws`, `~/.tasks.test`, `~/.tasks.lint`, `~/.tasks.sec`, `~/.tasks.build`.
 
 **2) 🌍 Globaler & Lokaler Modus**
 
@@ -436,13 +444,13 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 **5) 🛡 Sicherheit & Kontrolle**
 
 - **Bestätigung:** `[!]` in der Beschreibung erzwingt eine Bestätigung.
-- **Multi-Select (UI):** Markieren per Leertaste (Ausführung nacheinander).
+- **Multi-Select (UI):** Markieren per Leertaste, Start mit Enter (nacheinander) — mit `RUN_PARALLEL_MULTI=1` parallel.
 
 **6) 📝 Task-Dependencies & Verlauf**
 
 - **Dependencies:** `[depends: task1,task2]` führt automatisch abhängige Tasks aus.
 - **Task-Verlauf:** Drücke `!` um Ausführungsverlauf mit Status & Laufzeit zu sehen.
-- **Timeout-Schutz:** Tasks werden nach 5 Minuten automatisch beendet (konfigurierbar via `TIMEOUT=`). Funktioniert auf macOS ohne GNU coreutils — und `Ctrl+C` bricht einen laufenden Task immer ab.
+- **Timeout-Schutz:** Tasks werden nach 5 Minuten automatisch beendet (global via `TIMEOUT=` oder pro Task via `[timeout: N]`). Funktioniert auf macOS ohne GNU coreutils — und `Ctrl+C` bricht einen laufenden Task immer ab.
 - **Performance-Stats:** Jeder Task zeigt die Ausführungszeit für Optimierungen.
 
 **7) 🎨 UI & UX**
@@ -467,8 +475,8 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 **8) 📁 Datei-Browser**
 
 - **Dateien durchsuchen:** Drücke `[f]` um Dateien in deinem Projektverzeichnis zu durchsuchen und zu bearbeiten.
-- **Schnellbearbeitung:** Prioritätsdateien zuerst (`.tasks`, `.tasks.local`, `.tasks.dev`, `.env`, `.runrc`, `README.md`).
-- **Neu erstellen:** Drücke `[c]` um sofort neue Config-Dateien zu erstellen.
+- **Schnellbearbeitung:** Prioritätsdateien zuerst (`.tasks`, `.env`, `README.md`, `package.json`, `docker-compose.yml`).
+- **Neu erstellen:** Drücke `1`, um eine neue Datei zu erstellen (Editor oder Paste-Modus).
 - **Anzeigen & Bearbeiten:** Wähle, welche Datei mit vollständiger Content-Paste-Unterstützung angezeigt oder bearbeitet werden soll.
 
 **9) 🏷 Task-Tags**
@@ -478,20 +486,22 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 - **Mehrere Tags:** Jeder Task kann mehrere durch Leerzeichen getrennte Tags haben.
 - **Tag-Beispiele:** Typische Tags sind `#deployment`, `#testing`, `#backend`, `#frontend`, `#documentation`.
 - **Live-Filterung:** Das Menü aktualisiert sich sofort um nur Tasks mit dem ausgewählten Tag anzuzeigen.
-- **Filter löschen:** Drücke `[#]` und wähle "(all)" um wieder alle Tasks zu sehen.
+- **Filter löschen:** Drücke `[#]` und wähle `0) [All Tasks]`, um wieder alle Tasks zu sehen.
 
 **10) ⭐ Task-Favoriten**
 
 - **Zu Favoriten hinzufügen:** Drücke `[*]` auf einen Task um den Status zu wechseln.
 - **Favoriten anzeigen:** Drücke `[r]` um das Favoriten-Menü zu öffnen.
 - **Schnellausführung:** Führe häufig verwendete Tasks direkt aus der Favoritenliste aus.
+- **Zweistellige Auswahl:** Ab zehn Einträgen beide Ziffern tippen (z.B. `12`) —
+  die zweite Ziffer wird 0,5 s lang erwartet.
 - **Persistent:** Favoriten werden in `~/.run_favorites` gespeichert (eine pro Zeile).
 
 **11) 🔌 Integrationen**
 
 - **Zsh Widget:** Menü per `Ctrl+O` öffnen.
 - **Zsh Completion:** Auto-Vervollständigung von Task-Namen mit `<TAB>` (wird automatisch installiert).
-- **Multi-Config:** Merge `~/.tasks`, `.tasks.local`, `.tasks.dev` für flexible Verwaltung.
+- **Multi-Config:** Kombiniere `.tasks` mit den additiven Overlays `.tasks.local` / `.tasks.dev` für flexible Task-Verwaltung.
 - **Raycast & Alfred:** macOS-Integrationen über Skripte in `integrations/`.
 - **SSH/Remote:** Volle SSH-Unterstützung mit Auto-Erkennung (nutze `ssh -t` für interaktiven Modus).
 
@@ -507,7 +517,7 @@ Version 2.1.3 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. L�
 - **Magic Installer:** One-liner Installer via `install.sh`.
 - **Integritätsprüfung (optional):** Setze `RUN_EXPECTED_SHA256=<hash>` vor `run --update` um das Download zu verifizieren.
 - Ohne `RUN_EXPECTED_SHA256` fragt `run --update` vor dem Anwenden nach Bestätigung.
-- Empfohlener Hash für v1.7.0: `e47f3ed99a347b814f3f660a0a72dcf74b25d63973e97a19cdf2700742f72846`
+- Der erwartete Hash ist der SHA256 der heruntergeladenen `run.sh`; vergleiche ihn mit der Release-Checksumme.
 
 **14) 🔒 Sicherheitshinweise**
 
@@ -547,7 +557,7 @@ VAR_PORT=8080
 **Task-Features:**
 
 - **Dependencies:** `[depends: task1,task2]` – Führt Vorbedingungen automatisch aus
-- **Timeout:** `[timeout: 60]` – Überschreibe Task-Timeout (Sekunden, max 600)
+- **Timeout:** `[timeout: 60]` – Überschreibe Task-Timeout (Sekunden, kein Maximum)
 - **Bestätigung:** `[!]` – Erfordert explizite Bestätigung vor Ausführung
 - **Variablen:** `VAR_NAME=wert` – Oben definieren, als `$VAR_NAME` in Commands nutzen
 - **Eingaben:** `<<VaribleName>>` – Wird zur Laufzeit abgefragt
@@ -611,7 +621,7 @@ Aliases funktionieren über `~/.run_aliases` (z.B. `g=git`, `srv=server`, `ngx=n
 **Profilverwaltungs-Befehle:**
 
 ```bash
-# Alle Profile auflisten (mit Dateiadressen und Task-Anzahl)
+# Alle Profilnamen auflisten
 run --list-profiles
 
 # Profile im JSON-Format auflisten (für CI/Scripting)
@@ -646,11 +656,11 @@ Verbessere die Performance bei großen Configs oder vielen Profilen durch Umgebu
 # Parallele Dependency-Ausführung (unabhängige Deps laufen gleichzeitig)
 export RUN_PARALLEL_DEPS=1
 
-# Profile-Listing cachen (60s TTL, beschleunigt Profilwechsel)
-export RUN_CACHE_PROFILES=1  # Standard: aktiviert
+# Markierte Tasks (Multi-Select) parallel ausführen
+export RUN_PARALLEL_MULTI=1
 
-# Optimiertes grep für große Configs
-export RUN_FAST_GREP=1  # Standard: aktiviert
+# Geparste Taskliste cachen (Standard: aktiviert)
+export RUN_CACHE_PROFILES=1
 ```
 
 **Verwendung:**
@@ -666,8 +676,8 @@ echo 'export RUN_PARALLEL_DEPS=1' >> ~/.zshrc
 **Performance-Gewinne:**
 
 - **Parallele Deps**: 2-5x schneller bei Tasks mit mehreren unabhängigen Dependencies
-- **Profile-Cache**: ~50ms schnelleres Profil-Auswahlmenü
-- **Fast Grep**: ~30% schneller bei Configs mit 100+ Tasks
+- **Menü-Cache**: die geparste Taskliste wird wiederverwendet, solange die Config unverändert ist
+- **Viewport**: es werden nur die sichtbaren Zeilen gezeichnet — große Configs bleiben responsiv
 
 ### 🔌 Integrationen
 
@@ -676,21 +686,27 @@ echo 'export RUN_PARALLEL_DEPS=1' >> ~/.zshrc
 Drücke `[f]` im Hauptmenü um Projektdateien zu durchsuchen und zu bearbeiten:
 
 ```
-📁 Datei-Browser
-Verzeichnis: /pfad/zum/projekt
-─────────────────────────────────────
-1) .tasks (vorhanden)
-2) .tasks.local (vorhanden)
-3) package.json
-4) Dockerfile
-5) README.md
+Datei-Browser
+Aktuelles Verzeichnis: /pfad/zum/projekt
 
-[1-9] Bearbeiten  [c]opy erstellen  [q]uit
+Prioritätsdateien:
+  - .tasks
+  - .env
+  - README.md
+  - package.json
+  - docker-compose.yml
+
+1) Neue Datei erstellen
+2) .tasks bearbeiten
+3) .env bearbeiten
+4) Alle Dateien durchsuchen
+0) Zurück
 ```
 
-- **[1-9]** um eine Datei auszuwählen und mit dem Config-Editor zu bearbeiten (Paste-Mode Unterstützung)
-- **[c]** um eine neue Datei zu erstellen (Eingabeaufforderung für Dateiname, dann Content einfügen)
-- **[q]** oder Escape um ins Hauptmenü zurückzukehren
+- **`1`** erstellt eine neue Datei (Editor oder Paste-Modus)
+- **`2` / `3`** öffnen `.tasks` bzw. `.env` direkt
+- **`4`** listet bis zu neun Dateien aus dem aktuellen Baum; `1-9` bearbeitet eine
+- **`0`** oder Escape kehrt ins Hauptmenü zurück
 
 #### SSH / Remote Server
 

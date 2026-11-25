@@ -18,6 +18,14 @@ C_HEAD=$'\e[1;36m'; C_OK=$'\e[1;32m'; C_WARN=$'\e[1;33m'
 C_ERR=$'\e[1;31m'; C_DIM=$'\e[2m'; C_INFO=$'\e[33m'
 C_RST=$'\e[0m'; C_BOLD=$'\e[1m'
 
+# Hooks (pre/post build, test, package, deploy, cleanup, error).
+# The file only defines empty default hooks — they can be customized
+# without touching the builder.
+if [ -f "$BP_BUILD_DIR/hooks.sh" ]; then
+    # shellcheck source=build-platform/hooks.sh
+    source "$BP_BUILD_DIR/hooks.sh"
+fi
+
 # Logging
 log_info() { echo -e "${C_INFO}ℹ $*${C_RST}"; }
 log_success() { echo -e "${C_OK}✔ $*${C_RST}"; }
@@ -52,6 +60,9 @@ init_build_env() {
 
     # Auto-cleanup old logs (keep last 10)
     cleanup_old_logs
+    # Auto-cleanup of stale cache entries (older than 7 days) — without this
+    # the cache directory grew without bounds.
+    cleanup_old_cache
 }
 
 # ==============================================================================
@@ -83,26 +94,6 @@ needs_rebuild() {
     [ "$source" -nt "$target" ] && return 0
 
     # No rebuild needed
-    return 1
-}
-
-# Check build cache
-check_build_cache() {
-    local target="$1"
-    local source="${2:-$BP_ROOT/run.sh}"
-
-    local source_hash
-    source_hash=$(get_source_hash "$source")
-
-    local cache_file="$BP_CACHE_DIR/${target}_${source_hash}.sh"
-
-    # Check if cached build exists
-    if [ -f "$cache_file" ]; then
-        log_dim "  ✓ Cache hit for $target"
-        return 0
-    fi
-
-    log_dim "  ⚡ Cache miss - building $target"
     return 1
 }
 
@@ -191,9 +182,12 @@ build_target_dev() {
     local dev_output="$BP_OUTPUT_DIR/run-dev.sh"
     local start_time=$SECONDS
 
+    pre_build_hook "dev"
+
     # Check if incremental build possible
     if ! needs_rebuild "$BP_ROOT/run.sh" "$dev_output"; then
         log_success "Dev build up-to-date: $dev_output"
+        post_build_hook "dev" "$dev_output"
         return 0
     fi
 
@@ -207,6 +201,7 @@ build_target_dev() {
         cp "$cache_file" "$dev_output"
         chmod +x "$dev_output"
         log_success "Dev build restored from cache: $dev_output"
+        post_build_hook "dev" "$dev_output"
         return 0
     fi
 
@@ -238,6 +233,7 @@ build_target_dev() {
     local duration=$((SECONDS - start_time))
     save_build_metrics "dev" "$dev_output" "$duration"
 
+    post_build_hook "dev" "$dev_output"
     log_success "Dev build created: $dev_output"
 }
 
@@ -247,9 +243,12 @@ build_target_prod() {
     local prod_output="$BP_OUTPUT_DIR/run-prod.sh"
     local start_time=$SECONDS
 
+    pre_build_hook "prod"
+
     # Check if incremental build possible
     if ! needs_rebuild "$BP_ROOT/run.sh" "$prod_output"; then
         log_success "Production build up-to-date: $prod_output"
+        post_build_hook "prod" "$prod_output"
         return 0
     fi
 
@@ -263,6 +262,7 @@ build_target_prod() {
         cp "$cache_file" "$prod_output"
         chmod +x "$prod_output"
         log_success "Production build restored from cache: $prod_output"
+        post_build_hook "prod" "$prod_output"
         return 0
     fi
 
@@ -299,25 +299,47 @@ build_target_prod() {
     local duration=$((SECONDS - start_time))
     save_build_metrics "prod" "$prod_output" "$duration"
 
+    post_build_hook "prod" "$prod_output"
     log_success "Production build created: $prod_output"
 }
 
 build_target_minimal() {
     log_step "Building MINIMAL target..."
 
+    pre_build_hook "minimal"
+
     # Build minimal version with only core features
     local minimal_output="$BP_OUTPUT_DIR/run-minimal.sh"
 
     # Check if modular source available
     if [ -f "$BP_ROOT/src/16-main.sh" ]; then
-        # Copy essential modules only
+        # All modules are needed: the menu (13-ui.sh) calls into the
+        # terminal, theme, cache, profile, search, tag, favorite, log,
+        # dependency, execution, browser and editor modules.  A subset
+        # would fail at runtime with "command not found".
+        #
+        # RUN_MINIMAL=1 disables the advanced features (search, tags,
+        # favorites, history, logs, browser, config editor) — the modules
+        # stay in the file, only their key bindings are switched off.
         {
             cat "$BP_ROOT/src/00-header.sh"
             cat "$BP_ROOT/src/01-config.sh"
             cat "$BP_ROOT/src/02-utils.sh"
+            cat "$BP_ROOT/src/03-terminal.sh"
+            cat "$BP_ROOT/src/04-themes.sh"
+            cat "$BP_ROOT/src/05-cache.sh"
+            cat "$BP_ROOT/src/06-profiles.sh"
+            cat "$BP_ROOT/src/07-search.sh"
+            cat "$BP_ROOT/src/08-tags.sh"
+            cat "$BP_ROOT/src/09-favorites.sh"
+            cat "$BP_ROOT/src/10-logs.sh"
+            cat "$BP_ROOT/src/11-dependencies.sh"
+            cat "$BP_ROOT/src/12-execution.sh"
             cat "$BP_ROOT/src/13-ui.sh"
+            cat "$BP_ROOT/src/14-browser.sh"
+            cat "$BP_ROOT/src/15-editor.sh"
             cat "$BP_ROOT/src/16-main.sh"
-        } > "$minimal_output"
+        } | sed 's/^RUN_MINIMAL="${RUN_MINIMAL:-0}"$/RUN_MINIMAL=1/' > "$minimal_output"
     else
         # Create minimal from monolithic by removing advanced features
         log_dim "  Creating minimal from monolithic run.sh"
@@ -325,11 +347,14 @@ build_target_minimal() {
     fi
 
     chmod +x "$minimal_output"
+    post_build_hook "minimal" "$minimal_output"
     log_success "Minimal build created: $minimal_output (core features only)"
 }
 
 build_target_docker() {
     log_step "Building DOCKER image..."
+
+    pre_build_hook "docker"
 
     # Create Dockerfile if it doesn't exist
     if [ ! -f "$BP_BUILD_DIR/Dockerfile" ]; then
@@ -355,6 +380,7 @@ EOF
     # Build Docker image
     docker build -t shell-menu-runner:latest -f "$BP_BUILD_DIR/Dockerfile" "$BP_ROOT"
 
+    post_build_hook "docker" "$BP_OUTPUT_DIR/run-prod.sh"
     log_success "Docker image built: shell-menu-runner:latest"
 }
 
@@ -384,13 +410,18 @@ build_target_all() {
 run_tests() {
     log_step "Running tests..."
 
+    pre_test_hook
+
     if [ ! -f "$BP_BUILD_DIR/tests/test-runner.sh" ]; then
         log_warn "Test runner not found, skipping tests"
+        post_test_hook 0
         return 0
     fi
 
     bash "$BP_BUILD_DIR/tests/test-runner.sh"
     local exit_code=$?
+
+    post_test_hook "$exit_code"
 
     if [ $exit_code -eq 0 ]; then
         log_success "All tests passed"
@@ -461,6 +492,8 @@ run_linter() {
 package_deb() {
     log_step "Building .deb package..."
 
+    pre_package_hook "deb"
+
     local version
     version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
     local pkg_dir="$BP_OUTPUT_DIR/shell-menu-runner_${version}_all"
@@ -491,6 +524,7 @@ EOF
     # Build package
     dpkg-deb --build "$pkg_dir"
 
+    post_package_hook "deb" "${pkg_dir}.deb"
     log_success "Debian package created: ${pkg_dir}.deb"
 }
 
@@ -501,6 +535,8 @@ package_rpm() {
 
 package_tarball() {
     log_step "Building tarball..."
+
+    pre_package_hook "tarball"
 
     local version
     version=$(grep -m1 -o 'VERSION="[^"]*"' "$BP_ROOT/run.sh" | cut -d'"' -f2)
@@ -517,6 +553,7 @@ package_tarball() {
         --exclude='.build-logs' \
         run.sh install.sh README.md "${tar_extras[@]}" completions/
 
+    post_package_hook "tarball" "$tarball"
     log_success "Tarball created: $tarball"
 }
 
@@ -547,6 +584,8 @@ package_all() {
 deploy_github_release() {
     log_step "Deploying to GitHub Releases..."
 
+    pre_deploy_hook "github"
+
     if ! command -v gh &>/dev/null; then
         log_error "GitHub CLI (gh) not installed"
         return 1
@@ -564,10 +603,12 @@ deploy_github_release() {
         --title "v$version" \
         --notes "Automated release v$version"
 
+    post_deploy_hook "github" "v$version"
     log_success "GitHub release created"
 }
 
 deploy_dockerhub() {
+    pre_deploy_hook "dockerhub"
     log_step "Pushing to Docker Hub..."
 
     if ! command -v docker &>/dev/null; then
@@ -584,6 +625,7 @@ deploy_dockerhub() {
     docker push "mariopeters/shell-menu-runner:$version"
     docker push mariopeters/shell-menu-runner:latest
 
+    post_deploy_hook "dockerhub" "shell-menu-runner:latest"
     log_success "Docker images pushed"
 }
 
@@ -644,6 +686,7 @@ generate_checksums() {
 clean_build() {
     log_step "Cleaning build artifacts..."
 
+    cleanup_hook
     rm -rf "$BP_OUTPUT_DIR"
 
     log_success "Build artifacts cleaned"
@@ -669,6 +712,7 @@ clean_logs() {
 }
 
 clean_all() {
+    cleanup_hook
     log_step "Deep cleaning..."
 
     clean_build
@@ -817,6 +861,9 @@ EOF
 # ==============================================================================
 
 main() {
+    # The error hook is called when a command fails
+    trap 'on_error_hook "$?" "$LINENO"' ERR
+
     # Handle environment variables
     [ "${BP_NO_COLOR:-0}" = "1" ] && {
         C_HEAD=''; C_OK=''; C_WARN=''; C_ERR=''; C_DIM=''; C_INFO=''; C_RST=''; C_BOLD=''

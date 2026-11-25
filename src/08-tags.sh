@@ -26,7 +26,28 @@ extract_tags() {
 has_tag() {
     local desc="$1"
     local tag="$2"
-    [[ "$desc" =~ $tag ]]
+    # Exact token match: "#dev" must not match "#developer" and "#de" must not
+    # match "#dev".  The tag is matched literally (it may only contain
+    # [a-zA-Z0-9_-]), surrounded by non-tag characters or string boundaries.
+    local needle="${tag#\#}"
+    case "$needle" in
+        ''|*[!a-zA-Z0-9_-]*) return 1 ;;
+    esac
+    local rest="$desc"
+    while :; do
+        case "$rest" in
+            *"#$needle")
+                # The match must not be followed by another tag character
+                local after="${rest#*\#"$needle"}"
+                case "$after" in
+                    [a-zA-Z0-9_-]*) ;;
+                    *) return 0 ;;
+                esac
+                rest="$after"
+                ;;
+            *) return 1 ;;
+        esac
+    done
 }
 
 get_all_tags() {
@@ -38,6 +59,8 @@ get_all_tags() {
     # Process-Substitution: kein all_output-String im Speicher
     # `|| [ -n "$_tag_line" ]` → die letzte Zeile ohne Newline wird mit gelesen
     while read -r _tag_line || [ -n "$_tag_line" ]; do
+        # Tolerate CRLF line endings
+        _tag_line="${_tag_line%$'\r'}"
         split_task_line "$_tag_line"
         extract_tags "$_f_desc"
         # Leeres Array nicht expandieren (Bash 3.2 + set -u → unbound variable)
@@ -84,21 +107,77 @@ show_tag_menu() {
     done
     
     echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
-    echo "[1-9] Filter [q]uit"
+    # Two digit selection: with more than nine tags the single digit keys
+    # could not reach the entries 10+ — they were displayed but not selectable.
+    if [ "$num_tags" -gt 9 ]; then
+        echo "[1-9] [0-9+Enter] Filter [q]uit"
+    else
+        echo "[1-9] Filter [q]uit"
+    fi
     
+    # Buffered numeric input: a single digit selects immediately, a second
+    # digit extends the number (10+), Enter confirms.
+    local _buf=""
     while true; do
         key=$(read_key) || break
         case "$key" in
             "0")
+                if [ -n "$_buf" ]; then
+                    # "0" as the first digit is not a valid entry (0 = All)
+                    _buf=""
+                    continue
+                fi
                 tag_filter=""
                 echo -e "${COLOR_SEL}✔ Showing all tasks${COLOR_RESET}"
                 sleep 0.5
                 break
                 ;;
             [1-9])
-                local idx=$((key - 1))
-                if [ "$idx" -lt "$num_tags" ]; then
-                    tag_filter="${all_tags[$idx]}"
+                if [ -n "$_buf" ]; then
+                    # Second digit: 10..99
+                    local _idx=$(( _buf * 10 + key - 1 ))
+                    _buf=""
+                    if [ "$_idx" -lt "$num_tags" ]; then
+                        tag_filter="${all_tags[$_idx]}"
+                        echo -e "${COLOR_SEL}✔ Filtering by ${tag_filter}${COLOR_RESET}"
+                        sleep 0.5
+                        break
+                    fi
+                    continue
+                fi
+                # First digit: could be 1..9 or the start of a two digit number
+                if [ "$num_tags" -gt 9 ]; then
+                    _buf="$key"
+                    # A short timeout collects the second digit
+                    # 0,5 s Zeitfenster fuer die zweite Ziffer (10+)
+                    _second=$(read_key_optional 5)
+                    if [ -n "$_second" ] && [[ "$_second" =~ ^[0-9]$ ]]; then
+                        local _idx2=$(( key * 10 + _second - 1 ))
+                        if [ "$_idx2" -lt "$num_tags" ]; then
+                            tag_filter="${all_tags[$_idx2]}"
+                            echo -e "${COLOR_SEL}✔ Filtering by ${tag_filter}${COLOR_RESET}"
+                            sleep 0.5
+                            break
+                        fi
+                        _buf=""
+                        continue
+                    fi
+                    _buf=""
+                fi
+                local _idx=$(( key - 1 ))
+                if [ "$_idx" -lt "$num_tags" ]; then
+                    tag_filter="${all_tags[$_idx]}"
+                    echo -e "${COLOR_SEL}✔ Filtering by ${tag_filter}${COLOR_RESET}"
+                    sleep 0.5
+                    break
+                fi
+                ;;
+            $'\r'|$'\n')
+                [ -n "$_buf" ] || continue
+                local _idx3=$(( _buf - 1 ))
+                _buf=""
+                if [ "$_idx3" -lt "$num_tags" ]; then
+                    tag_filter="${all_tags[$_idx3]}"
                     echo -e "${COLOR_SEL}✔ Filtering by ${tag_filter}${COLOR_RESET}"
                     sleep 0.5
                     break

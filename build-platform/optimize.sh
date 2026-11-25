@@ -9,7 +9,7 @@ set -euo pipefail
 readonly INPUT="${1:-run.sh}"
 readonly OUTPUT="${2:-dist/run-ultra.sh}"
 
-C_INFO=$'\e[36m'; C_OK=$'\e[1;32m'; C_RST=$'\e[0m'
+C_INFO=$'\e[36m'; C_OK=$'\e[1;32m'; C_ERR=$'\e[1;31m'; C_RST=$'\e[0m'
 
 echo "${C_INFO}=== Advanced Optimizer ===${C_RST}"
 echo "Input:  $INPUT"
@@ -29,12 +29,18 @@ mkdir -p "$(dirname "$OUTPUT")"
 # ==============================================================================
 #  OPTIMIZATION PIPELINE
 # ==============================================================================
+# Previous steps 2-4 (whitespace collapsing in-place, string rewriting) were
+# CONTENT-ALTERING: they rewrote quotes and case patterns and even broke the
+# quoting structure of "[[ ... == *'"'* ]]" — the produced "run-ultra.sh"
+# failed with "conditional binary operator expected" and "bash -n".  The only
+# safe size win is comment/blank removal (step 1).  A failing "bash -n" gate
+# below now keeps a broken artifact from ever being distributed as a build.
 
 echo "${C_INFO}Step 1: Remove comments & empty lines${C_RST}"
 awk '
     BEGIN { in_header = 1 }
     /^#!/ { print; next }
-    /^# ===.*===/ { 
+    /^# ===.*===/ {
         if (in_header) { print; next }
         in_header = 0
     }
@@ -42,40 +48,23 @@ awk '
     /^[[:space:]]*#/ { next }
     /^[[:space:]]*$/ { next }
     { print }
-' "$INPUT" > "${OUTPUT}.tmp1"
+' "$INPUT" > "$OUTPUT"
 
-STEP1_SIZE=$(wc -c < "${OUTPUT}.tmp1")
-echo "  After step 1: $(numfmt --to=iec $STEP1_SIZE 2>/dev/null || echo "$STEP1_SIZE bytes")"
+STEP1_SIZE=$(wc -c < "$OUTPUT")
+echo "  After step 1: $(numfmt --to=iec "$STEP1_SIZE" 2>/dev/null || echo "$STEP1_SIZE bytes")"
 
-echo "${C_INFO}Step 2: Remove leading/trailing whitespace${C_RST}"
-sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "${OUTPUT}.tmp1" > "${OUTPUT}.tmp2"
-
-STEP2_SIZE=$(wc -c < "${OUTPUT}.tmp2")
-echo "  After step 2: $(numfmt --to=iec $STEP2_SIZE 2>/dev/null || echo "$STEP2_SIZE bytes")"
-
-echo "${C_INFO}Step 3: Compress multi-space sequences${C_RST}"
-sed 's/[[:space:]][[:space:]]*/ /g' "${OUTPUT}.tmp2" > "${OUTPUT}.tmp3"
-
-STEP3_SIZE=$(wc -c < "${OUTPUT}.tmp3")
-echo "  After step 3: $(numfmt --to=iec $STEP3_SIZE 2>/dev/null || echo "$STEP3_SIZE bytes")"
-
-echo "${C_INFO}Step 4: String deduplication${C_RST}"
-# Remove excessive spacing in strings and optimize patterns
-sed 's/"[[:space:]]*\([^"]*\)[[:space:]]*"/"\1"/g' "${OUTPUT}.tmp3" > "${OUTPUT}.tmp4"
-
-STEP4_SIZE=$(wc -c < "${OUTPUT}.tmp4")
-echo "  After step 4: $(numfmt --to=iec $STEP4_SIZE 2>/dev/null || echo "$STEP4_SIZE bytes")"
-
-# Final output
-mv "${OUTPUT}.tmp4" "$OUTPUT"
 chmod +x "$OUTPUT"
-
-# Cleanup
-rm -f "${OUTPUT}".tmp*
 
 # ==============================================================================
 #  RESULTS
 # ==============================================================================
+# Syntax gate: the rewritten artifact must still be valid bash.  Without this
+# check a hostile "optimization" step silently shipped a broken run-ultra.sh.
+if ! bash -n "$OUTPUT"; then
+    echo "${C_ERR}✗ ERROR: $OUTPUT is not valid bash — the optimizer is broken; build discarded${C_RST}" >&2
+    rm -f "$OUTPUT"
+    exit 1
+fi
 
 FINAL_SIZE=$(wc -c < "$OUTPUT")
 FINAL_LINES=$(wc -l < "$OUTPUT")

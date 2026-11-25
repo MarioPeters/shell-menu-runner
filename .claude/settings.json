@@ -1,20 +1,25 @@
 {
-    "allowedTools": [
-        "Bash(make:*)",
-        "Bash(bash build.sh*)",
-        "Bash(bash build-platform/*)",
-        "Bash(./build.sh*)",
-        "Bash(./run.sh*)",
-        "Bash(bash -x ./run.sh*)",
-        "Bash(bash -n src/*)",
-        "Bash(shellcheck src/*)",
-        "Bash(shellcheck run.sh)",
-        "Bash(git status)",
-        "Bash(git diff*)",
-        "Bash(git log*)",
-        "Bash(git add src/*)",
-        "Bash(git add CLAUDE.md)",
-        "Bash(git commit*)",
-        "Bash(git push)"
-    ]
+	"allowedTools": [
+		"Bash(make:*)",
+		"Bash(bash build.sh*)",
+		"Bash(bash build-platform/*)",
+		"Bash(./build.sh*)",
+		"Bash(./run.sh*)",
+		"Bash(bash -x ./run.sh*)",
+		"Bash(bash -n src/*)",
+		"Bash(bash -n run.sh)",
+		"Bash(bash build-platform/tests/test-runner.sh)",
+		"Bash(bash build-platform/tests/test-docs.sh)",
+		"Bash(shellcheck src/*)",
+		"Bash(shellcheck -x run.sh build.sh install.sh)",
+		"Bash(zsh -n completions/_run)",
+		"Bash(git status)",
+		"Bash(git diff*)",
+		"Bash(git log*)",
+		"Bash(git add src/*)",
+		"Bash(git add CLAUDE.md)",
+		"Bash(git add docs/*)",
+		"Bash(git commit*)",
+		"Bash(git push)"
+	]
 }

@@ -28,6 +28,13 @@ fi
 # ==============================================================================
 
 readonly VERSION="2.1.3"
+# HOME wird für alle Konfigurationspfade gebraucht.  Ohne HOME brach das
+# Skript später mit "HOME: unbound variable" ab — die Meldung sagt dem
+# Nutzer nicht, was zu tun ist.
+if [ -z "${HOME:-}" ]; then
+    echo "Error: HOME is not set — cannot locate the configuration files." >&2
+    exit 1
+fi
 readonly LOCAL_CONFIG=".tasks"
 readonly GLOBAL_CONFIG="$HOME/.tasks"
 readonly LOCAL_SETTINGS=".runrc"
@@ -44,21 +51,16 @@ readonly RUN_VARS_FILE="$HOME/.run_vars"
 
 # --- PERFORMANCE FLAGS (can be set via environment) ---
 RUN_PARALLEL_DEPS="${RUN_PARALLEL_DEPS:-0}"      # Enable parallel dependency execution
-RUN_CACHE_PROFILES="${RUN_CACHE_PROFILES:-1}"   # Cache profile listings (60s TTL)
+# Enables the menu cache (the parsed task list is reused until the config
+# files change).  The name is historic — the flag no longer controls a
+# profile listing cache.
+RUN_CACHE_PROFILES="${RUN_CACHE_PROFILES:-1}"   # Cache the parsed menu/task list
+# The minimal build has no advanced features (search, tags, favorites,
+# history, logs, file browser, config editor).  Set by the builder.
+RUN_MINIMAL="${RUN_MINIMAL:-0}"
 # Optimierung für macOS/BSD Grep (Locale-Reset für Geschwindigkeit bei Sortierung/Regex)
 # Aber UTF-8 Zeichen müssen erhalten bleiben, daher nur Collate auf C setzen.
 export LC_COLLATE=C
-
-# --- PLATFORM DETECTION ---
-OS_NAME="$(uname -s 2>/dev/null || echo "Unknown")"
-readonly OS_NAME
-ARCH_NAME="$(uname -m 2>/dev/null || echo "Unknown")"
-readonly ARCH_NAME
-IS_MACOS_ARM=0
-if [[ "$OS_NAME" == "Darwin" && "$ARCH_NAME" == "arm64" ]]; then
-    IS_MACOS_ARM=1
-fi
-export IS_MACOS_ARM
 
 set -euo pipefail
 

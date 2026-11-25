@@ -263,14 +263,14 @@ stty size                    # Check terminal size
    stty size    # Shows current size
    ```
 
-2. **Disable animation**
+2. **Adjust the layout**
 
    ```bash
-   export RUN_DISABLE_ANIMATION=1
    run
+   # Press 's' → reduce "Columns" or change the theme
    ```
 
-3. **Use different theme**
+3. **Use a different theme**
    ```bash
    run
    # Press 's' → Select DARK or LIGHT theme
@@ -377,14 +377,13 @@ wc -l .tasks        # Check task count
 
    ```bash
    # Instead of 100 tasks in .tasks
-   # Create .tasks.dev, .tasks.deploy, .tasks.test
-   run dev      # Loads only development tasks
+   # Create .tasks.develop, .tasks.deploy, .tasks.test
+   run develop  # Loads only development tasks
    ```
 
-4. **Reduce filter search scope**
+4. **Use a direct hotkey instead of searching**
    ```bash
-   # Use specific hotkeys instead of searching
-   run && press 1  # Faster than menu + filter
+   run --run 1    # non-interactive: run the first task
    ```
 
 ---
@@ -422,8 +421,8 @@ cat .tasks | grep depends
 
 3. **Remove unnecessary dependencies**
    ```bash
-   # Identify unused dependencies
-   run --validate
+   # Find dependency annotations
+   grep -n 'depends:' .tasks
    ```
 
 ---
@@ -527,8 +526,8 @@ cat .tasks | grep -A1 deploy
 **Diagnosis:**
 
 ```bash
-# Check timeout setting
-grep TIMEOUT ~/.runrc
+# Check timeout setting (task config, not ~/.runrc)
+grep TIMEOUT .tasks
 # Default: 300 seconds (5 min)
 
 # Test command duration
@@ -540,8 +539,12 @@ time your-command
 1. **Increase timeout**
 
    ```bash
-   # In .runrc
-   TIMEOUT=600    # 10 minutes
+   # In .tasks (global) or in the task description (per task)
+   TIMEOUT=600
+   ```
+
+   ```bash
+   0|Long Task|./run.sh|Run with timeout [timeout: 600]
    ```
 
 2. **Run task outside menu**

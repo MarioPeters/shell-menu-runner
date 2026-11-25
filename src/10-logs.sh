@@ -10,10 +10,11 @@ add_to_history() {
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local status="✔"
     [ "$exit_code" -ne 0 ] && status="✗"
-    echo "$timestamp | $status | $task_name | exit:$exit_code | time:${exec_time}s" >> "$RUN_HISTORY_FILE"
-    
-    # Keep history file size manageable
-    trim_file_to_lines "$RUN_HISTORY_FILE" "$RUN_HISTORY_MAX"
+    # append_line hängt an und kürzt unter einer Sperre — bei parallelen
+    # Tasks gingen sonst Einträge verloren.
+    append_line "$RUN_HISTORY_FILE" \
+        "$timestamp | $status | $task_name | exit:$exit_code | time:${exec_time}s" \
+        "$RUN_HISTORY_MAX"
 
     add_to_recent "$task_name" "$exec_time"
 }
@@ -46,12 +47,11 @@ add_to_recent() {
     local exec_time="$2"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+
     # Format: timestamp|config_path|task_name|exec_time
-    echo "$timestamp|$config_path|$task_name|${exec_time}s" >> "$RUN_RECENT_FILE"
-    
-    # Keep only latest entries
-    trim_file_to_lines "$RUN_RECENT_FILE" "$RUN_RECENT_MAX"
+    append_line "$RUN_RECENT_FILE" \
+        "$timestamp|$config_path|$task_name|${exec_time}s" \
+        "$RUN_RECENT_MAX"
 }
 
 show_recent() {
@@ -86,34 +86,58 @@ show_recent() {
         _name="${_rest%%|*}"
         # ${##*/} statt basename-Subshell
         local short_path="${_path##*/}"
-        [ "$idx" -le 9 ] && printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$_name" "$short_path" || printf "  ${COLOR_DIM}%s (%s)${COLOR_RESET}\n" "$_name" "$short_path"
+        printf "%d) ${COLOR_SEL}%s${COLOR_RESET} ${COLOR_DIM}(%s)${COLOR_RESET}\n" "$idx" "$_name" "$short_path"
         idx=$((idx + 1))
     done
     echo -e "${COLOR_DIM}$(separator_line)${COLOR_RESET}"
-    echo -e "\n[1-9] Execute [q]uit"
+    local _num_entries=${#lines[@]}
+    if [ "$_num_entries" -gt 9 ]; then
+        echo -e "\n[1-9] [two digits] Execute [q]uit"
+    else
+        echo -e "\n[1-9] Execute [q]uit"
+    fi
 
     while true; do
         key=$(read_key) || break
-        if [[ "$key" =~ [1-9] ]]; then
-            local sel=$((key - 1))
-            # ":-" verhindert "unbound variable" bei einem Index außerhalb der Liste
-            local entry="${lines[$sel]:-}"
-            if [ -n "$entry" ]; then
-                _rest="${entry#*|}"
-                _path="${_rest%%|*}"
-                _rest="${_rest#*|}"
-                _name="${_rest%%|*}"
-                if [ -f "$_path" ]; then
-                    if _run_recent_task "$_path" "$_name"; then
-                        clear
-                        return 0
+        if [[ "$key" =~ ^[0-9]$ ]]; then
+            # Zwei-stellige Auswahl: die Einträge 10+ wurden angezeigt, waren
+            # aber nicht erreichbar — es wurde nur eine Ziffer akzeptiert.
+            local _num="$key"
+            if [ "$_num_entries" -gt 9 ] && [ "$_num" != "0" ]; then
+                local _second
+                # 0,5 s Zeitfenster fuer die zweite Ziffer (10+)
+                _second=$(read_key_optional 5)
+                if [ -n "$_second" ] && [[ "$_second" =~ ^[0-9]$ ]]; then
+                    _num="${_num}${_second}"
+                fi
+            fi
+            # "10#" erzwingt die Basis 10 (sonst wäre "08" ein Oktal-Fehler)
+            if selection_index "$_num" "$_num_entries"; then
+                local sel="$SELECT_INDEX"
+                # ":-" verhindert "unbound variable" bei einem Index außerhalb der Liste
+                local entry="${lines[$sel]:-}"
+                if [ -n "$entry" ]; then
+                    _rest="${entry#*|}"
+                    _path="${_rest%%|*}"
+                    _rest="${_rest#*|}"
+                    _name="${_rest%%|*}"
+                    if [ -f "$_path" ]; then
+                        local _rc=0
+                        _run_recent_task "$_path" "$_name" || _rc=$?
+                        if [ "$_rc" -eq 0 ]; then
+                            clear
+                            return 0
+                        elif [ "$_rc" -eq 1 ]; then
+                            echo -e "${COLOR_ERR}Task not found: $_name${COLOR_RESET}"
+                            sleep 1
+                        else
+                            echo -e "${COLOR_ERR}Task failed (exit $_rc): $_name${COLOR_RESET}"
+                            sleep 1
+                        fi
                     else
-                        echo -e "${COLOR_ERR}Task not found: $_name${COLOR_RESET}"
+                        echo -e "${COLOR_ERR}Profile not found: $_path${COLOR_RESET}"
                         sleep 1
                     fi
-                else
-                    echo -e "${COLOR_ERR}Profile not found: $_path${COLOR_RESET}"
-                    sleep 1
                 fi
             fi
         elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]] || [[ "$key" == $'\x1b' ]]; then
@@ -140,15 +164,18 @@ _run_recent_task() {
     # letzten Tasks neu aufgebaut werden, sonst wird der falsche Task gefunden.
     detect_config_files
 
-    local found=1
-    find_task_in_menu "$name" "_execute_recent_callback" || found=0
+    local _rc=0
+    find_task_in_menu "$name" "_execute_recent_callback" || _rc=$?
+    local _found="$_TASK_FOUND"
 
     # Zustand immer zurücksetzen (auch nach erfolgreicher Ausführung)
     config_path="$prev_config"
     active_mode="$prev_mode"
     detect_config_files
 
-    [ "$found" -eq 1 ]
+    # 1 → task not found, otherwise the exit code of the task
+    [ "$_found" -eq 0 ] && return 1
+    return "$_rc"
 }
 
 _execute_recent_callback() {
@@ -160,7 +187,7 @@ _execute_recent_callback() {
 
 show_logs() {
     clear
-    echo -e "${COLOR_HEAD}Recent Logs${COLOR_RESET}"
+    echo -e "${COLOR_HEAD}$(msg logs_title)${COLOR_RESET}"
     echo -e "${COLOR_DIM}Last 9 log files:${COLOR_RESET}"
     echo ""
     
@@ -170,7 +197,7 @@ show_logs() {
     IFS=$'\n' read -r -d '' -a log_files < <(find "$RUN_LOG_DIR" -type f -name "*.log" 2>/dev/null | sort -r | head -9 && printf '\0') || true
 
     if [ ${#log_files[@]} -eq 0 ]; then
-        echo -e "${COLOR_DIM}No log files found.${COLOR_RESET}"
+        echo -e "${COLOR_DIM}$(msg no_logs)${COLOR_RESET}"
     else
         local idx=1
         local log_file
@@ -184,7 +211,7 @@ show_logs() {
         
         while true; do
             key=$(read_key) || break
-            if [[ "$key" =~ [1-9] ]]; then
+            if [[ "$key" =~ ^[0-9]$ ]]; then
                 local sel=$((key - 1))
                 if [ "$sel" -lt "${#log_files[@]}" ]; then
                     clear

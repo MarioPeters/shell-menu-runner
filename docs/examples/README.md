@@ -234,7 +234,7 @@ run task-name          # Run single task
 
 ```bash
 .tasks           # Shared core tasks
-.tasks.dev       # Development tasks
+.tasks.develop   # Development tasks
 .tasks.prod      # Production tasks
 .tasks.test      # Testing tasks
 ```

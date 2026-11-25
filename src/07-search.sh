@@ -9,19 +9,31 @@ save_search_term() {
     local term="$1"
     [ -z "$term" ] && return
 
+    # Der komplette Read-Modify-Write-Zyklus läuft unter einer Sperre:
+    # parallel laufende Instanzen überschrieben sich sonst gegenseitig
+    # (Einträge gingen verloren).
+    _lock_acquire "$SEARCH_HISTORY_FILE"
+
     # Remove duplicates (fixed-string match, safe with regex special chars)
     if [ -f "$SEARCH_HISTORY_FILE" ]; then
         # PID im Temp-Namen: parallele run.sh-Instanzen dürfen sich nicht
         # gegenseitig die Temp-Datei wegschnappen.
         local tmp="${SEARCH_HISTORY_FILE}.tmp.$$"
-        _grep -vxF "$term" "$SEARCH_HISTORY_FILE" > "$tmp" 2>/dev/null || true
+        # "-e <pattern> -- <file>": ein Suchbegriff, der mit "-" beginnt
+        # ("-x", "--"), würde sonst als Option interpretiert.  rg las dann
+        # den Dateinamen als Muster und blockierte auf stdin — der Verlauf
+        # wurde dabei leer geschrieben.
+        _grep -vxF -e "$term" -- "$SEARCH_HISTORY_FILE" > "$tmp" 2>/dev/null || true
         mv "$tmp" "$SEARCH_HISTORY_FILE" 2>/dev/null || rm -f "$tmp"
     fi
 
-    echo "$term" >> "$SEARCH_HISTORY_FILE"
+    printf '%s\n' "$term" >> "$SEARCH_HISTORY_FILE"
 
     # Keep only last N entries
-    trim_file_to_lines "$SEARCH_HISTORY_FILE" "$SEARCH_HISTORY_MAX"
+    _trim_file_to_lines "$SEARCH_HISTORY_FILE" "$SEARCH_HISTORY_MAX"
+
+    _lock_release "$SEARCH_HISTORY_FILE"
+    return 0
 }
 
 get_search_history() {

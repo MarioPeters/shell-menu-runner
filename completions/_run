@@ -31,18 +31,25 @@ _run_default_config() {
 # The field splitting mirrors split_task_line() in the script: the last field
 # keeps any remaining separators and a line without a description is still
 # offered.
+#
+# All levels are offered (not only level 0): "run --run <name>" executes tasks
+# from submenus as well.
 _run_describe_tasks() {
     local file="$1"
     [ -f "$file" ] || return 0
 
     local -a tasks
-    local line rest name desc
+    local line rest name cmd desc
     # The `|| [ -n "$line" ]` keeps a last line without trailing newline —
     # same guard as the script uses when it reads the config.
     while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            "0|"*) ;;
-            *) continue ;;
+        # Tolerate CRLF line endings
+        line="${line%$'\r'}"
+        # Only numeric levels are tasks; SUB/BACK/EXIT lines are filtered by cmd.
+        local level="${line%%|*}"
+        [ "$level" = "$line" ] && continue
+        case "$level" in
+            ''|*[!0-9]*) continue ;;
         esac
 
         rest="$line"
@@ -56,13 +63,23 @@ _run_describe_tasks() {
             name="$rest"
             rest=""
         fi
-        # command (not needed)
-        if [ "${rest#*|}" != "$rest" ]; then rest="${rest#*|}"; else rest=""; fi
+        # command
+        if [ "${rest#*|}" != "$rest" ]; then
+            cmd="${rest%%|*}"
+            rest="${rest#*|}"
+        else
+            cmd="$rest"
+            rest=""
+        fi
         # description — the remainder of the line
         desc="$rest"
 
         [ -n "$name" ] || continue
-        tasks+=("${name//:/\\:}:$desc")
+        # SUB/BACK/EXIT are menu entries, not executable tasks
+        case "$cmd" in
+            SUB|BACK|EXIT|"") ;;
+            *) tasks+=("${name//:/\\:}:$desc") ;;
+        esac
     done < "$file"
 
     if [ ${#tasks[@]} -gt 0 ]; then
@@ -143,15 +160,21 @@ _run_profiles() {
     # `local f` once, outside the loop: a repeated `local f` inside a loop
     # makes zsh print "f=''" to stdout (typeset on an existing variable
     # prints its value) and pollutes the completion display.
-    local f
+    local f base
     while [[ "$d" != "/" ]]; do
         for f in "$d"/.tasks.*(N); do
-            add_profile "${${f:t}#.tasks.}" ""
+            [ -f "$f" ] || continue
+            base="${${f:t}#.tasks.}"
+            case "$base" in local|dev) continue ;; esac
+            add_profile "$base" ""
         done
         d="${d:h}"
     done
     for f in "$HOME"/.tasks.*(N); do
-        add_profile "${${f:t}#.tasks.}" ""
+        [ -f "$f" ] || continue
+        base="${${f:t}#.tasks.}"
+        case "$base" in local|dev) continue ;; esac
+        add_profile "$base" ""
     done
 
     if [ -f "$HOME/.run_aliases" ]; then
@@ -207,6 +230,16 @@ _run() {
                 '--init[Initialize new .tasks file]' \
                 '--update[Self-update to latest version]' \
                 '--global[Use global task file]' \
+                '--list[List all tasks of the current profile]' \
+                '--run[Execute a task by name or number]:task:' \
+                '--dry-run[Preview the command without executing it]' \
+                '--across[Execute a task across multiple profiles]:profiles:' \
+                '--init-profile[Create a new profile]:profile:' \
+                '--validate[Validate a profile file]:profile:' \
+                '--analyze[Show analysis and improvement suggestions]:profile:' \
+                '--list-profiles[List all available profiles]' \
+                '--list-profiles=json[List all available profiles as JSON]' \
+                '--debug[Enable debug output]' \
                 '(--edit -e)'{--edit,-e}'[Edit task configuration]'
 
             if (( CURRENT == 2 )); then

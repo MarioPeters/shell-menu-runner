@@ -25,11 +25,26 @@ task_execution_time=0
 is_interactive=1
 is_ssh_session=0
 ssh_hint_shown=0
-last_config_mtime=0
-last_config_level=0
-last_config_stack=""
-cached_menu_options=""
 DEBUG_MODE=0
+# Menu cache — the parsed task list of the current config.
+#
+# The cache key contains everything the result depends on: the config path,
+# the change stamp of the file, the current level, the breadcrumb and the
+# active filters.  Without the filters in the key every keypress in a
+# filtered menu re-read and re-parsed the whole config (~250 ms for 2000
+# tasks).
+#
+# The cached list itself lives in _cached_menu_array (13-ui.sh) — an array
+# keeps the entries intact, a single string would have to be split again
+# on every use.
+_menu_cache_key=""
+last_config_stamp=""
+# Der Cache-Key enthält den Level, den Breadcrumb und die Filter — der
+# Config-Pfad wird getrennt geprüft: zwei Configs mit identischem
+# Änderungs-Stempel (mtime:size) sind sonst nicht unterscheidbar, und das
+# Menü zeigte nach einem Wechsel ("g" global/lokal, "p" Profil) die Tasks
+# der vorherigen Config.
+_menu_cache_config_path=""
 # shellcheck disable=SC2034
 cli_mode=0          # 1 when --run is active; skips interactive prompts in execute_task
 # shellcheck disable=SC2034
@@ -62,13 +77,19 @@ SETTINGS_CONTEXT_SHOW=""
 # ==============================================================================
 
 parse_config_vars() {
-    set +e +o pipefail  # Disable errexit and pipefail for grep operations
-    [ ! -f "$config_path" ] && return
-    TASK_THEME=$(awk -F':' '/^# THEME:/ {val=$2; gsub(/^[ \t]+|[ \t]+$/, "", val); print val; exit}' "$config_path" 2>/dev/null)
+    # The errexit/pipefail state is saved and restored: the interactive menu
+    # loop runs with "set +e" and a blind "set -e" at the end of this function
+    # would end the whole menu on the first failing command (e.g. draw_menu
+    # returning 1 because tput is unavailable).
+    save_shell_opts
+    set +e +o pipefail
+    [ ! -f "$config_path" ] && { restore_shell_opts; return; }
+    TASK_THEME=$(awk -F':' '/^# THEME:/ {val=$2; gsub(/^[ \t]+|[ \t]+$/, "", val); print val; exit}' "$config_path" 2>/dev/null) || true
     task_timeout=$(extract_field_from_grep "^TIMEOUT=" "=" 2)
     task_timeout="${task_timeout:-$RUN_TASK_TIMEOUT}"
     load_task_vars
-    set -e -o pipefail  # Re-enable errexit and pipefail
+    restore_shell_opts
+    return 0
 }
 
 # ==============================================================================
@@ -90,17 +111,24 @@ parse_settings_file() {
     local file="$1"
     [ ! -f "$file" ] && return 0
     while IFS= read -r line || [ -n "$line" ]; do
+        # Tolerate CRLF line endings (Windows editors / git core.autocrlf)
+        line="${line%$'\r'}"
         case "$line" in
             ""|\#*) continue ;;
         esac
         local key="${line%%=*}"
         local value="${line#*=}"
+        # Numeric settings are validated here: an invalid value (e.g.
+        # "COLS_MIN_WIDTH=0") would cause a division by zero in the layout
+        # calculation and kill the menu.
+        # The if/else is important: a failed "&&" chain as the last command
+        # of the case branch would return non-zero and abort the script.
         case "$key" in
             THEME)          SETTINGS_THEME="$value" ;;
             LANG)           SETTINGS_LANG="$value" ;;
-            COLS_MIN)       SETTINGS_COLS_MIN="$value" ;;
-            COLS_MAX)       SETTINGS_COLS_MAX="$value" ;;
-            COLS_MIN_WIDTH) SETTINGS_COLS_MIN_WIDTH="$value" ;;
+            COLS_MIN)       if is_uint "$value" && [ "$value" -ge 1 ]; then SETTINGS_COLS_MIN="$value"; fi ;;
+            COLS_MAX)       if is_uint "$value"; then SETTINGS_COLS_MAX="$value"; fi ;;
+            COLS_MIN_WIDTH) if is_uint "$value" && [ "$value" -ge 1 ]; then SETTINGS_COLS_MIN_WIDTH="$value"; fi ;;
             CONTEXT_SHOW)   SETTINGS_CONTEXT_SHOW="$value" ;;
         esac
     done < "$file"
@@ -171,15 +199,34 @@ detect_config_files() {
     local base_name="${config_path##*/}"
 
     task_config_files=()
+    local -a _candidates=()
     if [ "$base_name" = ".tasks" ]; then
-        if [ -f "$config_dir/.tasks" ];              then task_config_files+=("$config_dir/.tasks");              fi
-        if [ -f "$config_dir/.tasks.local" ];         then task_config_files+=("$config_dir/.tasks.local");         fi
-        if [ -f "$config_dir/.tasks.dev" ];           then task_config_files+=("$config_dir/.tasks.dev");           fi
+        _candidates+=("$config_dir/.tasks" "$config_dir/.tasks.local" "$config_dir/.tasks.dev")
     else
-        if [ -f "$config_dir/$base_name" ];           then task_config_files+=("$config_dir/$base_name");           fi
-        if [ -f "$config_dir/${base_name}.local" ];   then task_config_files+=("$config_dir/${base_name}.local");   fi
-        if [ -f "$config_dir/${base_name}.dev" ];     then task_config_files+=("$config_dir/${base_name}.dev");     fi
+        _candidates+=("$config_dir/$base_name" "$config_dir/${base_name}.local" "$config_dir/${base_name}.dev")
     fi
+
+    # Ein Symlink auf eine bereits geladene Datei (z.B. ".tasks.local" ->
+    # ".tasks") würde jeden Task doppelt in das Menü laden.  Die Dateien
+    # werden deshalb über Device/Inode entdoppelt.
+    local -a _seen_ids=()
+    local _f _id _s _dup=0
+    for _f in "${_candidates[@]}"; do
+        [ -f "$_f" ] || continue
+        _id=$(get_file_id "$_f")
+        _dup=0
+        if [ -n "$_id" ]; then
+            for _s in "${_seen_ids[@]+"${_seen_ids[@]}"}"; do
+                if [ "$_s" = "$_id" ]; then
+                    _dup=1
+                    break
+                fi
+            done
+            [ "$_dup" -eq 0 ] && _seen_ids+=("$_id")
+        fi
+        [ "$_dup" -eq 1 ] && continue
+        task_config_files+=("$_f")
+    done
 
     return 0
 }
@@ -195,25 +242,74 @@ merge_configs() {
     fi
 }
 
-get_all_tasks() {
-    local result=""
+# Cache for the parsed task list (see get_all_tasks)
+_all_tasks_cache=()
+_all_tasks_cache_key=""
+
+# Result of the last _build_all_tasks() call.
+#
+# The list is returned in a global array instead of on stdout: a caller that
+# reads the result via a process substitution runs in a subshell, and every
+# cache variable set there is lost when it exits — the cache never hit and
+# the whole config was re-read and re-parsed for every dependency.
+ALL_TASKS_ARRAY=()
+
+_build_all_tasks() {
+    # Cache the parsed task list.  find_task_in_menu() requests the list once
+    # per dependency — without the cache the whole config was read and parsed
+    # again for every single dependency.
+    local _sig="${config_path}"
+    _sig="${_sig}|$(get_file_stamp "$config_path")"
+    local _f
+    for _f in "${task_config_files[@]+"${task_config_files[@]}"}"; do
+        _sig="${_sig}|$(get_file_stamp "$_f")"
+    done
+    if [ "$_sig" = "$_all_tasks_cache_key" ] && [ ${#_all_tasks_cache[@]} -gt 0 ]; then
+        ALL_TASKS_ARRAY=("${_all_tasks_cache[@]}")
+        return 0
+    fi
+
+    local -a _all_tasks_result=()
+    local line
     while IFS= read -r line || [ -n "$line" ]; do
+        # Tolerate CRLF line endings — a trailing \r would end up in the
+        # description and corrupt the menu layout.
+        line="${line%$'\r'}"
         [ -z "$line" ] && continue
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ "$line" =~ ^TIMEOUT= ]] && continue
-        [[ "$line" =~ ^VAR_ ]] && continue
-        [[ "$line" =~ ^THEME: ]] && continue
-        [[ "$line" =~ ^TITLE: ]] && continue
+        is_meta_task_line "$line" && continue
 
         split_task_line "$line"
         level="$_f_level"; name="$_f_name"; cmd="$_f_cmd"; desc="$_f_desc"
         [ -z "$name" ] && continue
+        # Das Level muss eine Zahl sein — dieselbe Prüfung wie in
+        # _build_menu_options().  Ohne sie-listete "run --list" Tasks mit
+        # ungültigem Level auf, die im Menü nie sichtbar waren, und
+        # "run --run <name>" konnte sie ausführen.
+        case "$level" in
+            ''|*[!0-9]*) continue ;;
+        esac
         if [ "$cmd" = "SUB" ] || [ "$cmd" = "BACK" ] || [ "$cmd" = "EXIT" ]; then
             continue
         fi
-        result+="${level}|${name}|${cmd}|${desc}"$'\n'
+        _all_tasks_result+=("${level}|${name}|${cmd}|${desc}")
     done < <(merge_configs)
-    printf "%s" "$result"
+
+    # "[@]+" keeps an empty array safe under `set -u` on Bash 3.2
+    _all_tasks_cache=("${_all_tasks_result[@]+"${_all_tasks_result[@]}"}")
+    _all_tasks_cache_key="$_sig"
+    ALL_TASKS_ARRAY=("${_all_tasks_result[@]+"${_all_tasks_result[@]}"}")
+    return 0
+}
+
+# Prints the parsed task list (one task per line).
+# Internal callers use _build_all_tasks() directly so that the cache
+# variables survive (see ALL_TASKS_ARRAY).
+get_all_tasks() {
+    _build_all_tasks
+    if [ ${#ALL_TASKS_ARRAY[@]} -gt 0 ]; then
+        printf "%s\n" "${ALL_TASKS_ARRAY[@]}"
+    fi
+    return 0
 }
 
 file_sha256() {

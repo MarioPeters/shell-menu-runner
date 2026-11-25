@@ -66,7 +66,7 @@ run
 | **↑ ↓**          | Move up/down (_or_ `j`/`k`)    |
 | **← →**          | Move left/right (_or_ `h`/`l`) |
 | **Enter**        | Execute selected task          |
-| **Space**        | Mark multiple tasks            |
+| **Space**        | Mark tasks for multi-select     |
 | **/**, then type | Filter by name                 |
 | **g**            | Switch global/local mode       |
 | **p**            | Switch profiles                |
@@ -84,7 +84,7 @@ run --list-profiles
 run --validate
 
 # Start a specific profile
-run dev
+run frontend
 
 # List all tasks and run one without the menu (works over SSH / in CI)
 run --list
@@ -111,24 +111,32 @@ ssh user@server.com "cd project && run" <<< "3"
 Create a profile for different contexts:
 
 ```bash
-# Create .tasks.dev for development tasks
-cat > .tasks.dev << 'EOF'
+# Create .tasks.frontend for frontend tasks
+cat > .tasks.frontend << 'EOF'
 0|Dev Server|npm run dev|Start dev server
 0|Watch Tests|npm test -- --watch|Watch mode tests
 EOF
 
-# Switch to profile
-run dev
+# Switch to the profile
+run frontend
 ```
+
+Note: `.tasks.local` and `.tasks.dev` are **overlays** that are merged into
+the default `.tasks` menu automatically (they are not listed as profiles).
+Every other `.tasks.<name>` is a separate profile.
 
 ### Use Environment Variables
 
 ```bash
-# Your .tasks file can use <<NAME>> for prompts:
-0|Deploy|deploy.sh <<ENV>>|Deploy to [STAGING|PROD]
+# Ask for a value at runtime
+0|Deploy|deploy.sh <<ENV>>|Deploy to an environment
 
-# At runtime, you'll be prompted: "Deploy to [STAGING|PROD]"
+# Or offer a dropdown
+0|Deploy|deploy.sh <<ENV:STAGING,PROD>>|Deploy to an environment
 ```
+
+`<<ENV>>` prompts for text; `<<ENV:STAGING,PROD>>` lets you select one of the
+values.
 
 ### Enable Parallel Dependencies
 
@@ -153,8 +161,10 @@ EXECUTION          NAVIGATION           SPECIAL
 [Enter] Execute    [j/k] Up/Down       [/] Filter
 [1-9]  Quick-run   [h/l] Left/Right    [g] Global/Local
 [Space] Multi      [↑ ↓ ← →] Arrows    [p] Profiles
-[*] Favorite       [n/p] Pages         [?] Help
-[R] Recents        [Esc] Back          [q] Quit
+[*] Favorite       [Esc] Back          [?] Help
+[R] Recents        [n/p] Pages*        [q] Quit
+
+* only in the profile selection menu
 
 SETTINGS
 ────────
@@ -289,14 +299,14 @@ run aws          # AWS cloud operations
 ✅ **Use hotkeys for speed**
 
 ```bash
-# Press 1-9 to run tasks without menu
-run && press 1  # Runs first task
+# Press 1-9 to run tasks without navigating
+run --run 1    # non-interactive: run the first task
 ```
 
 ✅ **Organize with sub-menus**
 
 ```bash
-# LEVEL > 0 creates sub-menus
+# A SUB entry at level 0 opens a submenu; its children are level 1
 0|Database|SUB|Database operations
 1|Migrate|./migrate.sh|Run migrations
 1|Seed|./seed.sh|Seed test data

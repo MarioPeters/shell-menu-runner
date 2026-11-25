@@ -45,7 +45,7 @@
 
 # Status
 0|Status|SUB|Service status
-1|Health|curl -s http://localhost:3001/health | jq|Check health
+1|Health|curl -s http://localhost:3001/health|Check health
 1|Status Check|kubectl get pods -l app=auth|Pod status
 1|Logs|kubectl logs -f deployment/auth|View logs
 1|Metrics|curl -s http://localhost:3001/metrics|Metrics

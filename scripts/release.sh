@@ -129,6 +129,26 @@ fi
 
 cecho "${C_OK}✓ Prerequisites met${C_RST}"
 
+# Portable in-place sed, decided ONCE:
+#   BSD sed (macOS):  "sed -i -E s/../../ file" consumes "-E" as the -i backup
+#     suffix, then edits the file in BASIC regex mode — the substitution does
+#     NOT match ("+" is a literal there), the command exits 0 (so a "||"
+#     fallback never runs) and a stray "<file>-E" backup is left behind.
+#   GNU sed (Linux):  "sed -i -E ..." is the correct form.
+# Detecting the platform up front therefore REMOVES the whole fallback chain.
+if [ "$(uname -s)" = "Darwin" ]; then
+  SED_I=(sed -i '')
+else
+  SED_I=(sed -i)
+fi
+
+# sed_inplace <expr> <file...>: run the platform-correct in-place replacement.
+sed_inplace() {
+  local expr="$1"
+  shift
+  "${SED_I[@]}" -E "$expr" "$@"
+}
+
 cecho "${C_DIM}→ Running bash syntax checks...${C_RST}"
 if bash -n run.sh install.sh scripts/release.sh integrations/alfred/alfred_workflow_script.sh integrations/raycast/run-project.sh; then
   cecho "${C_OK}✓ Bash syntax OK${C_RST}"
@@ -214,14 +234,16 @@ fi
 
 cecho "\n${C_DIM}[1/5] Updating version references...${C_RST}"
 if [ "$DRY_RUN" -eq 0 ]; then
-  # Portable sed -i: GNU sed needs no suffix argument, BSD sed (macOS)
-  # requires one.  The first form fails on macOS, the second one on GNU.
-  sed -i -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh 2>/dev/null || \
-    sed -i '' -E "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh
-  sed -i -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md 2>/dev/null || \
-    sed -i '' -E "s/version-[0-9.]+-blue/version-$version-blue/" README.md
-  sed -i -E "s/Version [0-9.]+ \(/Version $version (/g" README.md 2>/dev/null || \
-    sed -i '' -E "s/Version [0-9.]+ \(/Version $version (/g" README.md
+  sed_inplace "s/^readonly VERSION=\"[^\"]+\"/readonly VERSION=\"$version\"/" src/00-header.sh
+  sed_inplace "s/version-[0-9.]+-blue/version-$version-blue/" README.md
+  sed_inplace "s/Version [0-9.]+ \(/Version $version (/g" README.md
+  # Detect a failed substitution instead of silently shipping the release
+  # script with an unchanged version header (the old "||" fallback chain
+  # masked exactly this on macOS).
+  if ! grep -q "readonly VERSION=\"$version\"" src/00-header.sh; then
+    cecho "${C_ERR}✗ Version update failed: src/00-header.sh still not at $version.${C_RST}" >&2
+    exit 1
+  fi
   cecho "${C_OK}✓ Version updated to $version in src/00-header.sh${C_RST}"
 else
   cecho "${C_DIM}  - src/00-header.sh: readonly VERSION=\"$version\"${C_RST}"
@@ -245,8 +267,7 @@ else
 fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i -E "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md 2>/dev/null || \
-    sed -i '' -E "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md
+  sed_inplace "s/Recommended hash for v[0-9.]+: .*/Recommended hash for v$version: $sha/" README.md
   python3 - <<PY
 from pathlib import Path
 import re

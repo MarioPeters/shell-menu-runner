@@ -1,175 +1,103 @@
 # 📚 Documentation
 
-Complete guide to shell-menu-runner — from first run to advanced optimization.
+Complete guide to shell-menu-runner — from first run to advanced automation.
 
 ---
 
 ## 🚀 Quick Navigator
 
-**First time?** Start here:
+**First time?** Start with [QUICK_START.md](QUICK_START.md) (5 minutes).
 
-    ⌨️ **[KEYBOARD_SHORTCUTS.md](./KEYBOARD_SHORTCUTS.md)** — All hotkeys in 2 min
+**Looking for a specific flag?** [CLI_REFERENCE.md](CLI_REFERENCE.md).
 
-**Ready to dive deeper?**
+**Need a key?** [KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md).
 
-**Quick References?**
+**Something broken?** [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-- 📋 **[CLI_REFERENCE.md](./CLI_REFERENCE.md)** — All CLI flags & options
-- ⌨️ **[KEYBOARD_SHORTCUTS.md](./KEYBOARD_SHORTCUTS.md)** — Keyboard hotkeys cheat
+**Want a ready-made task file?** [examples/](examples/).
 
-**Need examples?**
-
-- 💡 **[examples/](./examples/)** — Real-world task file templates
+**Working on the code?** [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
 ## 📋 Documentation Guide
 
-### [🟢 QUICK_START.md](./QUICK_START.md)
+### [🟢 QUICK_START.md](QUICK_START.md)
 
-**5-minute beginner guide**
+Five-minute beginner guide:
 
-Perfect for:
+- install the runner
+- create a `.tasks` file
+- run the first task
+- navigate the menu
+- next steps
 
-Sections:
+### [📋 CLI_REFERENCE.md](CLI_REFERENCE.md)
 
----
+Every command-line flag and the task-file syntax:
 
-### [🔧 TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
+- `run`, `--list`, `--run`, `--dry-run`, `--across`
+- profiles, overlays, validation
+- `[depends: ...]`, `[timeout: ...]`, `[!]`, placeholders
+- environment variables and `.env` handling
+- menu shortcuts
 
-**Solutions for common problems**
+### [⌨️ KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md)
 
-Perfect for:
+Complete key reference:
 
-- Installation issues
-- Configuration problems
-- Misaligned boxes with CJK/emoji names
-- Tasks that hang or cannot be stopped with Ctrl+C
-- Remote/SSH sessions without a TTY
-- Debug techniques
+- main menu navigation and execution
+- search, tags, favorites, history
+- profile menu, tag menu, settings, editor, file browser
+- documented against the key handler in `src/13-ui.sh`
 
-Sections:
-**Power-user recipes & optimization patterns**
+### [⚡ ADVANCED_USAGE.md](ADVANCED_USAGE.md)
 
-Perfect for:
+Power-user recipes:
 
-- Organizing large projects
-- Setting up complex workflows
-- Parallel task execution
-- Multi-profile coordination
-- Performance optimization
-- CI/CD integration
+- profiles, overlays and submenus
+- dependency chains and parallel dependencies
+- multi-profile execution
+- progress markers, timeouts and cancellation
+- `.env`, `~/.run_vars` and task-local variables
+- CI/CD and cron integration
 
-Sections:
+### [🔧 TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 
-- Task organization patterns (hierarchical, environment-based, service-based)
-- Advanced dependency resolution
-- Multi-profile workflows
-- Progress monitoring
-- Environment & secrets management
-- Performance optimization
-- CI/CD integration
-- Custom scripts & automation
+Solutions for common problems:
 
-**Real-world examples:**
+- installation and PATH issues
+- "No tasks found" and configuration errors
+- misaligned boxes with CJK/emoji
+- tasks that hang or time out
+- SSH sessions without a TTY
+- debug mode and diagnostics
 
-- Microservices deployment
-- DevOps workflows
-- Frontend development
+### [📖 ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Read time:** 20-30 minutes
+Code structure for contributors:
 
----
+- module layout and build process
+- startup and execution flow
+- configuration and overlay semantics
+- execution guarantees
+- complete function index
+- development workflow, performance notes and test checklist
 
-### [📖 ARCHITECTURE.md](./ARCHITECTURE.md)
+### [💡 examples/](examples/)
 
-**Code structure & development guide**
+Copy-paste task files:
 
-Perfect for:
-
-- Understanding the codebase
-- Contributing to the project
-- Adding new features
-- Optimizing performance
-- Debugging the core
-
-Sections:
-
-- Architecture overview
-- File structure
-- Core components (8 major)
-- Execution flow diagram
-- Feature deep dives (Progress Bar, Multi-Profile)
-- Contributing guide
-- Development workflow
-- Testing checklist
-- Performance considerations
-
-**Code metrics:**
-
-- 2850+ lines
-- 95+ functions
-- 30+ features
-- 0 external dependencies
-
-**Read time:** 30-45 minutes (reference document)
-
----
-
-### [💡 examples/](./examples/)
-
-**Real-world task file templates**
-
-Perfect for:
-
-- Copy-paste starting template
-- Learning patterns
-- Project-specific setup
-
-**Available templates:**
-
-1. **node-project.tasks** — React, Express, NestJS, Next.js
-2. **python-project.tasks** — Django, Flask, FastAPI
-3. **devops-k8s.tasks** — Kubernetes, container orchestration
-4. **microservices-root.tasks** — Multi-service orchestration
-5. **microservice-service.tasks** — Individual service tasks
-6. **web-project.tasks** — Full-stack (frontend + backend)
-
-**How to use:**
+1. `node-project.tasks` — React, Express, NestJS, Next.js
+2. `python-project.tasks` — Django, Flask, FastAPI
+3. `devops-k8s.tasks` — Kubernetes and container orchestration
+4. `microservices-root.tasks` — multi-service orchestration
+5. `microservice-service.tasks` — tasks for one service
+6. `web-project.tasks` — full-stack frontend + backend
 
 ```bash
-# Copy template for your project type
 cp docs/examples/node-project.tasks .tasks
-
-# Customize to your project
-# Edit paths, commands as needed
-
-# Start using
 run
-```
-
-**Read time:** 2-5 minutes per template
-
----
-
-## 📊 Documentation Map
-
-```
-Getting Started
-    ↓
-QUICK_START.md (5 min)
-    ↓
-├─→ Works? Great! → Check examples/
-│
-└─→ Issues? → TROUBLESHOOTING.md
-    ↓
-Ready to optimize?
-    ↓
-ADVANCED_USAGE.md (20 min)
-    ↓
-Want to contribute?
-    ↓
-ARCHITECTURE.md (30 min)
 ```
 
 ---
@@ -178,116 +106,58 @@ ARCHITECTURE.md (30 min)
 
 ### "I just installed, now what?"
 
-1. Read [QUICK_START.md](./QUICK_START.md) (5 min)
-2. Check [examples/](./examples/) for your project type
-3. Start using: `run`
+1. Read [QUICK_START.md](QUICK_START.md).
+2. Copy a template from [examples/](examples/) or run `run --init`.
+3. Start with `run`.
 
 ### "I have an error"
 
-1. Check [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-2. Find your error type
-3. Follow the solution
+1. Check [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+2. Run `run --validate` to check the task file.
+3. Run `DEBUG_MODE=1 run --list` for a trace.
 
-### "Want to power up?"
+### "I want more power"
 
-1. Read [ADVANCED_USAGE.md](./ADVANCED_USAGE.md)
-2. Try patterns in your project
-3. Use multi-profile execution
+1. Read [ADVANCED_USAGE.md](ADVANCED_USAGE.md).
+2. Try profiles and overlays.
+3. Use `--across` and `RUN_PARALLEL_MULTI=1` for multi-profile runs.
+4. Add `[depends: ...]` and `[timeout: ...]` annotations.
 
-### "Want to contribute?"
+### "I want to contribute"
 
-1. Read [ARCHITECTURE.md](./ARCHITECTURE.md)
-2. Understand the codebase
-3. Follow contributing guide
-4. Submit PR
-
----
-
-## 🔍 Search by Topic
-
-### Installation & Setup
-
-- [QUICK_START - Installation](./QUICK_START.md#2-installation)
-- [TROUBLESHOOTING - Installation Issues](./TROUBLESHOOTING.md#installation-issues)
-
-### Command Line & Flags
-
-- [CLI_REFERENCE - All flags](./CLI_REFERENCE.md)
-- [QUICK_START - First run](./QUICK_START.md#1-installation)
-
-### First Use
-
-- [QUICK_START - First .tasks File](./QUICK_START.md#3-create-your-first-tasks-file)
-- [examples/ - Copy a template](./examples/)
-
-### Keyboard Shortcuts
-
-- [QUICK_START - Navigation & Shortcuts](./QUICK_START.md#4-navigation--keyboard-shortcuts)
-- [KEYBOARD_SHORTCUTS - Complete guide](./KEYBOARD_SHORTCUTS.md)
-- [KEYBOARD_SHORTCUTS - Cheat sheet](./KEYBOARD_SHORTCUTS.md#keyboard-shortcuts-cheat-sheet)
-
-### Task Creation
-
-- [ADVANCED_USAGE - Task Patterns](./ADVANCED_USAGE.md#task-organization-patterns)
-- [examples/ - Real-world samples](./examples/)
-
-### Analysis & Recommendations
-
-- [run --analyze feature](./CLI_REFERENCE.md#execution-modes) - Project suggestions
-- [ADVANCED_USAGE - Best Practices](./ADVANCED_USAGE.md#best-practices)
-
-### Dependencies
-
-- [ADVANCED_USAGE - Dependency Resolution](./ADVANCED_USAGE.md#advanced-task-dependencies)
-- [ARCHITECTURE - Dependency System](./ARCHITECTURE.md#4-dependency-resolution)
-
-### Parallel Execution
-
-- [ADVANCED_USAGE - Parallel Optimization](./ADVANCED_USAGE.md#optimization-2-parallel-task-execution)
-- [ADVANCED_USAGE - Multi-Profile Parallel](./ADVANCED_USAGE.md#pattern-2-parallel-multi-profile)
-
-### Profiles & Organization
-
-- [ADVANCED_USAGE - Organizational Patterns](./ADVANCED_USAGE.md#task-organization-patterns)
-- [examples/ - Multi-profile setup](./examples/README.md)
-
-### CI/CD Integration
-
-- [ADVANCED_USAGE - CI/CD Integration](./ADVANCED_USAGE.md#cicd-integration)
-- [ARCHITECTURE &- Development Workflow](./ARCHITECTURE.md#development-workflow)
-
-### Debugging
-
-- [TROUBLESHOOTING - Debug Mode](./TROUBLESHOOTING.md#debug-mode)
-- [ARCHITECTURE - Debugging Tips](./ARCHITECTURE.md#debugging-tips)
+1. Read [ARCHITECTURE.md](ARCHITECTURE.md).
+2. Edit `src/`, never `run.sh`.
+3. Add a regression test in `build-platform/tests/test-runner.sh`.
+4. Run the full check (see below).
 
 ---
 
 ## 💬 One-Minute Overview
 
 **What is shell-menu-runner?**
-Interactive task automation framework for managing shell commands (npm, docker, kubectl, etc.) in a single menu interface.
+
+An interactive task menu for shell commands (npm, docker, kubectl, …) with
+profiles, dependencies, history and a zero-dependency Bash implementation.
 
 **Key features:**
 
-- ✅ Interactive task menu with keyboard navigation
-- ✅ Task dependencies (auto chain)
-- ✅ Multiple profiles (.tasks files)
-- ✅ Multi-profile execution (`--across`)
-- ✅ Progress tracking with visual bar
-- ✅ Theme customization (CYBER, DARK, LIGHT, MONO)
-- ✅ Caching for speed
-- ✅ Zero external dependencies
+- Interactive menu with keyboard and Vim navigation
+- Task dependencies and per-task timeouts
+- Profiles (`.tasks.<name>`) and additive overlays (`.local`, `.dev`)
+- Multi-profile execution with `--across`
+- Search, tags, favorites, history, logs
+- Progress bars via `[progress: ...]` markers
+- Themes and Unicode-safe layout
+- Bash 3.2+, no runtime dependencies
 
 **Typical workflow:**
 
 ```
-1. Run: run
-2. See task menu
-3. Press number or ↑↓ to select
-4. Press Enter to execute
-5. See output + timing
-6. Repeat
+1. run
+2. Select a task with arrows/j/k or a number
+3. Press Enter
+4. Read the output and timing
+5. Press any key to return to the menu
 ```
 
 ---
@@ -296,149 +166,115 @@ Interactive task automation framework for managing shell commands (npm, docker, 
 
 ### Beginner (Day 1)
 
-- [ ] Read [QUICK_START.md](./QUICK_START.md)
-- [ ] Create `.tasks` file with 3-5 tasks
-- [ ] Run `run` and execute first task
-- [ ] Try keyboard shortcuts (arrow keys, numbers, filter)
+- [ ] Read [QUICK_START.md](QUICK_START.md)
+- [ ] Create `.tasks` with 3–5 tasks
+- [ ] Run `run` and execute a task
+- [ ] Try arrows, `j`/`k`, `/`, `?`
 
 ### Intermediate (Week 1)
 
-- [ ] Read [ADVANCED_USAGE.md](./ADVANCED_USAGE.md) - Task Organization
-- [ ] Split into `.tasks.dev` + `.tasks.prod`
-- [ ] Try dependencies: `depends:0,1`
-- [ ] Copy/customize template from [examples/](./examples/)
+- [ ] Read [ADVANCED_USAGE.md](ADVANCED_USAGE.md)
+- [ ] Split tasks into profiles or overlays
+- [ ] Add `[depends: Name]`
+- [ ] Copy and adapt a template from [examples/](examples/)
 
 ### Advanced (Week 2+)
 
-- [ ] Read rest of [ADVANCED_USAGE.md](./ADVANCED_USAGE.md)
-- [ ] Set up multi-profile workflows
-- [ ] Enable parallel execution
+- [ ] Use `--across` and `--run` in scripts
+- [ ] Enable `RUN_PARALLEL_DEPS=1` / `RUN_PARALLEL_MULTI=1`
+- [ ] Add progress markers and per-task timeouts
 - [ ] Integrate with CI/CD
 
-### Contributor (Ongoing)
+### Contributor
 
-- [ ] Read [ARCHITECTURE.md](./ARCHITECTURE.md)
-- [ ] Study run.sh core sections
-- [ ] Fix a bug or add small feature
-- [ ] Submit PR
+- [ ] Read [ARCHITECTURE.md](ARCHITECTURE.md)
+- [ ] Follow the build and test workflow
+- [ ] Add tests for behavior changes
+- [ ] Submit a pull request
 
 ---
 
 ## ❓ FAQ
 
-**Q: Where do I put .tasks files?**
-A: Project root (`.tasks`) or home directory (`~/.tasks`) or subdirectories (`.tasks.NAME`)
+**Q: Where do I put `.tasks` files?**
 
-**Q: Can I use other shells?**
-A: Uses bash, but scripts inside tasks can use any shell
+A: In the project root (`.tasks`), in `~/.tasks` for global tasks, or as
+`.tasks.<name>` for a profile. The runner searches the current directory and
+its parents before falling back to `$HOME`.
 
-**Q: How to run without menu?**
-A: `run taskname` or `bash run.sh --task "name"`
+**Q: Can I use another shell inside tasks?**
 
-**Q: Multiple projects?**
-A: Each project gets its own `.tasks` file in its root
+A: Yes. Tasks are executed by Bash, but the command can invoke any interpreter
+(`python`, `node`, `zsh`, …).
 
-**Q: Import tasks from other projects?**
-A: Copy relevant .tasks files or use profiles: `run --across proj1,proj2 task`
+**Q: How do I run without the menu?**
 
-**For more:** Check [TROUBLESHOOTING.md - FAQ](./TROUBLESHOOTING.md#getting-help)
+A: Use `run --run "Task Name"`, `run --run 3`, or `run --list` to see the
+numbering. In a non-TTY session the menu is replaced by a numeric list.
+
+**Q: How do I create a profile?**
+
+A: `run --init-profile <name>` creates `.tasks.<name>` in the current
+directory. `run <name>` loads it.
+
+**Q: Are overlays merged or overriding?**
+
+A: Additive. `.tasks.local` and `.tasks.dev` are appended to `.tasks`; duplicate
+task names appear twice and dependency lookup uses the first match. Use unique
+names.
+
+**Q: How do I run a task across profiles?**
+
+A: `run --across dev,staging,prod deploy` (sequential) or with
+`RUN_PARALLEL_MULTI=1` in parallel.
+
+**Q: How do I see all keys?**
+
+A: Press `?` in the menu or read [KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md).
+
+**Q: Is there a test for documentation drift?**
+
+A: Yes: `bash build-platform/tests/test-docs.sh` checks documented helpers,
+keys, flags, examples and installer templates against the implementation.
+
+---
+
+## 🛠 Documentation Maintenance
+
+The documentation is part of the test suite:
+
+```bash
+bash build-platform/tests/test-docs.sh
+```
+
+The check verifies:
+
+- every helper documented in `CLAUDE.md` / `ARCHITECTURE.md` exists
+- every function in `src/` is mentioned in the AI/dev docs
+- documented keys exist in the matching key handler
+- documented CLI flags exist in the parser and `--help`
+- no phantom keys or flags are documented
+- declared line counts stay in sync
+- all `docs/examples/*.tasks` and `install.sh` templates validate
+
+When you change behavior, update the matching document in the same commit.
 
 ---
 
 ## 🔗 External Links
 
-- [GitHub Repository](https://github.com/yourusername/shell-menu-runner)
+- [GitHub Repository](https://github.com/MarioPeters/shell-menu-runner)
 - [Main README](../README.md)
 - [Changelog](../CHANGELOG.md)
 - [Contributing Guidelines](../CONTRIBUTING.md)
-
----
-
-## 📈 Documentation Statistics
-
-| Document                                         | Lines     | Content                | Read Time      |
-| ------------------------------------------------ | --------- | ---------------------- | -------------- |
-| [QUICK_START.md](./QUICK_START.md)               | 260+      | Beginner guide         | 5-10 min       |
-| [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)       | 400+      | Problem solutions      | As needed      |
-| [ADVANCED_USAGE.md](./ADVANCED_USAGE.md)         | 500+      | Power-user patterns    | 20-30 min      |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)             | 600+      | Code structure         | 30-45 min      |
-| [examples/](./examples/)                         | 200+/file | Task templates         | 2-5 min each   |
-| [CLI_REFERENCE.md](./CLI_REFERENCE.md)           | 250+      | CLI flags & options    | 3-5 min        |
-| [KEYBOARD_SHORTCUTS.md](./KEYBOARD_SHORTCUTS.md) | 300+      | Keyboard hotkeys       | 5-10 min       |
-| [examples/](./examples/)                         | 200+/file | Task templates         | 2-5 min each   |
-| **Total**                                        | **2800+** | **Complete reference** | **90-120 min** |
-
----
-
-## ✨ Highlights
-
-### QUICK_START.md
-
-```bash
-# What you'll learn in 5 minutes
-✓ Installation
-✓ Create first task file
-✓ Run your first task
-✓ Use keyboard shortcuts
-✓ Next steps
-```
-
-### TROUBLESHOOTING.md
-
-```bash
-# Covers issues like:
-✓ "bash: run: command not found"
-✓ "No tasks found"
-✓ Slow menu performance
-✓ Task execution errors
-✓ Debug techniques
-```
-
-### ADVANCED_USAGE.md
-
-```bash
-# Real patterns for:
-✓ Microservices deployment
-✓ DevOps workflows
-✓ Multi-profile coordination
-✓ Performance optimization
-✓ CI/CD integration
-```
-
-### ARCHITECTURE.md
-
-```bash
-# Deep dive into:
-✓ Code structure (95+ functions)
-✓ Core components
-✓ Contributing guide
-✓ Development workflow
-✓ Testing checklist
-```
-
-### examples/
-
-```bash
-# Ready-to-use templates for:
-✓ Node.js projects
-✓ Python projects
-✓ Kubernetes/DevOps
-✓ Microservices
-✓ Full-stack web apps
-```
+- [Build Platform](../BUILD_PLATFORM.md)
 
 ---
 
 ## 🚀 Next Steps
 
-1. **First time?** → [QUICK_START.md](./QUICK_START.md)
-2. **Hit a problem?** → [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-3. **Want more power?** → [ADVANCED_USAGE.md](./ADVANCED_USAGE.md)
-4. **Want to contribute?** → [ARCHITECTURE.md](./ARCHITECTURE.md)
-5. **Need a template?** → [examples/](./examples/)
-
----
-
-**Happy automating!** 🎉
-
-Last updated: 2024
+1. **First time?** → [QUICK_START.md](QUICK_START.md)
+2. **Hit a problem?** → [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+3. **Want more power?** → [ADVANCED_USAGE.md](ADVANCED_USAGE.md)
+4. **Want to contribute?** → [ARCHITECTURE.md](ARCHITECTURE.md)
+5. **Need a template?** → [examples/](examples/)

@@ -8,23 +8,32 @@ In-depth guide to the codebase for developers and contributors.
 
 1. [Overview](#overview)
 2. [File Structure](#file-structure)
-3. [Core Components](#core-components)
-4. [Execution Flow](#execution-flow)
-5. [Feature Deep Dives](#feature-deep-dives)
-6. [Contributing Guide](#contributing-guide)
-7. [Development Workflow](#development-workflow)
+3. [Startup & Execution Flow](#startup--execution-flow)
+4. [Configuration Model](#configuration-model)
+5. [Core Subsystems](#core-subsystems)
+6. [Task Execution Guarantees](#task-execution-guarantees)
+7. [Function Index](#function-index)
+8. [Contributing Guide](#contributing-guide)
+9. [Development Workflow](#development-workflow)
+10. [Performance Notes](#performance-notes)
+11. [Testing Checklist](#testing-checklist)
 
 ---
 
 ## Overview
 
-**shell-menu-runner** is a Bash-based task automation framework built with these principles:
+**shell-menu-runner** is a Bash-based task automation framework built with these
+principles:
 
-- **Modular source:** 17 modules in `src/` built into `run.sh` via `build.sh` — no external runtime dependencies, universal distribution
-- **Zero dependencies:** Works with only Bash 3.2+, runs anywhere
-- **Function-based:** 95+ named functions organized by module
-- **Profile system:** Load different task sets via profiles
-- **POSIX-compatible:** Strict mode (`set -euo pipefail`) for reliability
+- **Modular source:** 17 modules in `src/` are concatenated into `run.sh` by
+  `build.sh`. `run.sh`, `run.min.sh` and `dist/*` are generated artifacts.
+- **Zero runtime dependencies:** Bash 3.2+ is enough; `rg`, `jq`, `tput`,
+  `pgrep` and `sha256sum` are optional and have fallbacks.
+- **Profile system:** `.tasks`, `.tasks.<name>` and the overlays
+  `.tasks.local` / `.tasks.dev` select the visible task set.
+- **Strict mode:** the header enables `set -euo pipefail`; UI functions that
+  need to survive failing commands temporarily switch to `set +e`.
+- **Single source of truth:** edit `src/*.sh`, never `run.sh` or `dist/*`.
 
 ---
 
@@ -32,734 +41,318 @@ In-depth guide to the codebase for developers and contributors.
 
 ```
 .
-├── src/                # Modular source files (edited here, never run.sh directly)
-│   ├── 00-header.sh    # Shebang, strict mode, VERSION
-│   ├── 01-config.sh    # Config & settings
-│   ├── 02-utils.sh     # Shared helpers (trim_file_to_lines, get_realpath, …)
-│   ├── 03-terminal.sh  # Terminal capability init (TPUT_* vars, init_context)
-│   ├── 04-themes.sh    # Color themes
-│   ├── 05-cache.sh     # State persistence & memoization
-│   ├── 06-profiles.sh  # Profile system
-│   ├── 07-search.sh    # Search/filter logic
-│   ├── 08-tags.sh      # Tag system
-│   ├── 09-favorites.sh # Favorites management
-│   ├── 10-logs.sh      # Logging
-│   ├── 11-dependencies.sh # Dependency checks
-│   ├── 12-execution.sh # Task execution & CLI mode (--list / --run)
-│   ├── 13-ui.sh        # Main interactive loop & key handling
-│   ├── 14-browser.sh   # File browser
-│   ├── 15-editor.sh    # Config editor
-│   └── 16-main.sh      # Entry point & CLI arg parser
-├── run.sh              # Generated: concat of src/ (3900+ lines) — do not edit
-├── build.sh            # Build script: src/ → run.sh
-├── Makefile            # make dev | prod | all | test | lint | check | watch
-├── dist/               # Build artefacts (run-dev.sh, run-prod.sh, …)
-├── install.sh          # Installation script
-├── docs/               # Documentation
-│   ├── QUICK_START.md
-│   ├── ADVANCED_USAGE.md
-│   ├── TROUBLESHOOTING.md
-│   └── examples/       # Real-world .tasks templates
-├── integrations/       # Third-party integrations (Alfred, Raycast, Zsh)
-├── scripts/
-│   └── release.sh      # Release automation (--bump patch|minor|major)
-└── completions/
-    └── _run            # Zsh completions
+├── src/                    # Modular source (the only place to edit code)
+│   ├── 00-header.sh        # Shebang, zsh re-exec guard, globals, VERSION
+│   ├── 01-config.sh        # Config variables, settings, overlays
+│   ├── 02-utils.sh         # Shared helpers (locking, grep, parsing, state)
+│   ├── 03-terminal.sh      # TTY/raw mode, key reading, UTF-8 width, i18n
+│   ├── 04-themes.sh        # Themes and spinner
+│   ├── 05-cache.sh         # Persistent state and cache paths
+│   ├── 06-profiles.sh      # Profile discovery, validation and selection
+│   ├── 07-search.sh        # Search input and search history
+│   ├── 08-tags.sh          # Tag extraction and tag menu
+│   ├── 09-favorites.sh     # Favorites file and favorites menu
+│   ├── 10-logs.sh          # History, recent tasks and log listing
+│   ├── 11-dependencies.sh  # Dependencies, preview, multi-profile, analyze
+│   ├── 12-execution.sh     # Task execution, timeout, CLI mode, env guard
+│   ├── 13-ui.sh            # Main loop, menu builder, help panel
+│   ├── 14-browser.sh       # File browser
+│   ├── 15-editor.sh        # Config editor, alias editor, settings menu
+│   └── 16-main.sh          # CLI argument parser and startup
+├── run.sh                  # Generated from src/ — do not edit
+├── run.min.sh              # Generated by `./build.sh --min`
+├── build.sh                # src/ → run.sh (full) / run.min.sh (min)
+├── Makefile                # make dev | prod | minimal | ultra | test | lint
+├── build-platform/         # Builder, packaging, tests and CI helpers
+├── dist/                   # Generated build targets
+├── install.sh              # Installer and default profile templates
+├── completions/_run        # Zsh completion (checked with `zsh -n`)
+└── docs/                   # User and developer documentation
 ```
+
+The test suite lives in `build-platform/tests/test-runner.sh`; the
+documentation consistency check is `build-platform/tests/test-docs.sh`.
 
 ---
 
-## Core Components
+## Startup & Execution Flow
 
-### 1. Main Loop & Menu System
+There is no main() function. `src/16-main.sh` runs top-level code:
 
-**Lines:** ~500-1000
-
-```bash
-# Core entry point
-main()
-    ↓
-load_profiles()           # Load .tasks files ($HOME + parent dirs)
-    ↓
-render_menu()             # Display interactive menu
-    ↓
-handle_input()            # Process keyboard input
-    ↓
-execute_task()            # Execute selected task
-```
-
-**Key functions:**
-
-- `main()` - Entry point, initialization
-- `load_profiles()` - Discover & load .tasks files
-- `render_menu()` - Display task list with formatting
-- `handle_input()` - Process keyboard input, filtering, navigation
-- `execute_task()` - Run selected task with error handling
+1. **Argument parsing** consumes `--help`, `--version`, `--debug`, `--across`,
+   `--init`, `--list-profiles`, `--init-profile`, `--validate`, `--analyze`,
+   `--update`, `--global`, `--edit`, `--run`, `--dry-run` and `--list`.
+   Unknown `-*` arguments are rejected instead of being treated as profiles.
+2. **Profile resolution** expands an alias via `resolve_alias`, then searches
+   local configs (`find_named_config`) before `~/.tasks.<name>`. An alias that
+   points to a task name is dispatched later via `cli_run_task`.
+3. **Configuration load** calls `load_global_vars`, `parse_config_vars`,
+   `load_settings`, `apply_theme`, `load_state`, `detect_config_files` and
+   `load_aliases`.
+4. **Mode selection:** `--list` and `--run` call `_build_all_tasks` and the
+   CLI helpers. Otherwise `_build_menu_options` fills the first menu and
+   `main_interactive_loop` starts.
+5. **Interactive key handling** lives in `main_interactive_loop`
+   (`src/13-ui.sh`). It updates `selected_index` or dispatches an action and
+   calls `execute_task` for executable entries.
+6. **Task execution** (`execute_task` in `src/12-execution.sh`) runs the
+   preview, confirmation (`[!]`), dependencies, placeholder resolution,
+   dry-run branch, log creation and finally `run_task_streamed` with the
+   configured timeout. History and recent entries are written afterwards.
 
 ---
 
-### 2. Profile System
+## Configuration Model
 
-**Lines:** 1200-1350
+### Task lines
 
-**Purpose:** Load different task sets based on context
-
-```bash
-# Profile loading hierarchy
-1. Local profiles (.tasks, .tasks.NAME in project dir)
-2. Global profiles (~/.tasks, ~/.tasks.NAME)
-3. Built-in defaults
-
-# Profile locations
-.tasks              # Default: loaded always
-.tasks.dev          # Feature-specific: loaded via `run dev`
-.tasks.prod         # Environment-specific: loaded via `run prod`
-~/.tasks.gitproj    # Global: available across projects
+```
+LEVEL|NAME|COMMAND|DESCRIPTION
 ```
 
-**Key functions:**
+- `LEVEL` must be a non-negative decimal number. Non-numeric levels are
+  ignored by the menu and reported by `run --validate`.
+- `NAME` and `COMMAND` are required. The description may be empty.
+- `|` is the field separator. A `|` inside a name or command is not
+  representable; `run --validate` warns when a line contains more than four
+  fields.
+- `SUB`, `BACK` and `EXIT` are menu commands, not executable tasks.
+- A submenu is opened by a `SUB` entry at level *N*; its children are the
+  entries at level *N+1* directly below it. Levels must be contiguous —
+  a level-2 entry without a level-1 `SUB` parent is not visible.
+- `BACK` returns to the parent, `EXIT` leaves the menu.
 
-- `load_profile_config()` - Load profile into memory
-- `setup_profile_defaults()` - Set default variables per profile
-- `resolve_profile_location()` - Find profile file
-- `parse_env_file()` - Load .env variables
+### Overlays
+
+`detect_config_files` loads the active config plus its `.local` and `.dev`
+variants, in that order, and `merge_configs` concatenates them. Overlays are
+therefore **additive**, not overriding:
+
+- A task name that exists in both `.tasks` and `.tasks.local` appears twice.
+- Dependency resolution (`find_task_in_menu`) uses the first matching entry.
+- Symlinked overlays are de-duplicated by device/inode (`get_file_id`).
+
+### Annotations
+
+- `[depends: Name1,Name2]` is read from the command **or** the description.
+  Dependencies are exact task names and run before the task. Without
+  `RUN_PARALLEL_DEPS=1` they run sequentially; with it, independent
+  dependencies run concurrently.
+- `[timeout: 120]` in the description overrides the global `TIMEOUT=` value
+  for that task. The default is 300 seconds.
+- `[!]` at the start of the description requires an explicit confirmation.
+- `<<Name>>`, `<<Name=default>>` and `<<Name:value1,value2>>` are resolved at
+  runtime by `resolve_placeholders`; cancelling a dropdown aborts the task.
+
+### Settings
+
+`.runrc` files (global `~/.runrc`, local next to the config) contain
+`THEME`, `LANG`, `COLS_MIN`, `COLS_MAX`, `COLS_MIN_WIDTH` and `CONTEXT_SHOW`.
+Local values override global values. `TIMEOUT=`, `VAR_*` and `# THEME:` are
+read from the task config, not from `.runrc`.
 
 ---
 
-### 3. Task Parsing & Validation
+## Core Subsystems
 
-**Lines:** 1500-1700
+### Menu and cache
 
-**Task format:** `LEVEL|NAME|COMMAND|DESCRIPTION`
+`_build_menu_options` parses `merge_configs` into `MENU_RESULT_ARRAY` and
+caches the array plus a key made of level, breadcrumb, filters and config
+path. The change stamp (`get_file_stamp` / `get_files_stamp`) covers the
+config and its overlays. `invalidate_menu_cache` drops the cache after an
+explicit edit (`e`), a config switch (`g` / `p`) or a task run.
 
-```bash
-# Example task line
-0|Build|npm run build|Build production bundle
+`draw_menu` renders only the rows that fit into the terminal (`TPUT_LINES`);
+the grid index remains `row + column * rows`.
 
-# Components parsed
-LEVEL=0              # Menu depth (for sub-menus)
-NAME="Build"         # Display name
-COMMAND="npm run build"  # Shell command to execute
-DESCRIPTION="Build..."   # Help text
-```
+### Profiles
 
-**Parsing functions:**
+`list_available_profiles` searches the current directory and its parents and
+then `$HOME`; `local` and `dev` are reserved overlay suffixes and are not
+listed as profiles. `select_profile_menu` supports nine entries per page,
+`p`/`n` paging, `/` filtering and two-digit selection is not needed because
+each page shows at most nine profiles.
 
-- `parse_task_line()` - Parse single task line
-- `validate_task_syntax()` - Check format validity
-- `extract_dependencies()` - Find `depends:0,1,2` markers
-- `process_progress_output()` - Detect `[progress:X%]` markers
+### Search, tags and favorites
 
----
+Search is a literal, case-insensitive substring match over name and
+description; it is not a regular expression. Tags are `#tag` tokens in the
+description. Favorites, recent tasks and tags accept one or two digits:
+`selection_index` applies the `10#` prefix so `08` is decimal and the index
+is range-checked.
 
-### 4. Dependency Resolution
+### History and logs
 
-**Lines:** 1800-2000
+`append_line` appends and trims under a `mkdir`-based lock, so parallel tasks
+and parallel runner instances cannot lose entries. History is capped by
+`RUN_HISTORY_MAX`, recent tasks by `RUN_RECENT_MAX`. `create_log_file` writes
+one log per execution under `$RUN_LOG_DIR`, with a sequence counter that is
+unique even in a subshell.
 
-**Features:**
+### Execution and security
 
-- Sequential execution (default)
-- Parallel execution (when `RUN_PARALLEL_DEPS=1`)
-- Cycle detection
-- Dependency aggregation
+`execute_task` builds a child script that changes into the config directory in
+local mode, runs the `.env` guard (`_run_env_guard`) and evaluates the task
+command. The guard restores `PATH` and `IFS` and unsets `BASH_ENV`, `ENV`,
+`LD_*` and `DYLD_*` after sourcing `./.env`. `load_global_vars` applies the
+same denylist to `~/.run_vars` and additionally skips every name that
+collides with one of the runner's own readonly constants (`VERSION`, `RUN_*`,
+`DEFAULT_*`, …) — exporting those would otherwise abort the runner under
+`set -e`; `VAR_*` entries in the task config use the same rules.
 
-```bash
-# Task with dependencies
-0|Test|npm run test
-1|Build|npm run build depends:0   # Runs test first, then build
-2|Deploy|npm run deploy depends:1 # Runs build first, then deploy
+`run_task_streamed` starts a FIFO reader and a watchdog. The watchdog enforces
+the timeout and kills the whole process tree (`_kill_process_tree`); the reader
+streams output to the terminal and the log. Ctrl+C is handled with
+`trap ':' INT` so the signal reaches the foreground task while the menu
+survives.
 
-# Parallel execution
-export RUN_PARALLEL_DEPS=1
-# Now tasks 0,1,2 execute as:
-# 0 → 1 (depends on 0) → 2 (depends on 1)
-# But multiple non-dependent tasks run in parallel
-```
+### Terminal and display
 
-**Key functions:**
-
-- `resolve_dependencies()` - Build dependency graph
-- `execute_with_deps()` - Run task chain
-- `execute_parallel()` - Parallel execution handler
-- `detect_cycles()` - Find circular dependencies
-
----
-
-### 5. Output & Display
-
-**Lines:** 100-300
-
-**Features:**
-
-- Color theming (CYBER, MONO, DARK, LIGHT)
-- Progress bar rendering
-- Progress marker detection
-- Formatted output with alignment
-- Column-accurate layout (CJK/emoji = 2 terminal columns)
-
-**Color functions:**
-
-```bash
-color_setup()         # Initialize color variables
-render_progress_bar() # Display [========------] 50%
-process_progress_output() # Detect [progress:50%] markers
-format_table()        # Align columnar output
-```
-
-**Width measurement (`03-terminal.sh`):**
-
-```bash
-display_width <str>   # → $DISPLAY_WIDTH: terminal columns of a UTF-8 string
-fit_to_width <str> <n> # → $FIT_TEXT: padded/truncated to exactly n columns
-separator_line [max]  # Horizontal rule that fits the terminal width
-```
-
-The width is measured in **terminal columns**, not bytes or characters: a CJK
-glyph or an emoji occupies two columns, a combining mark none. Truncation
-never splits a UTF-8 character, so the box borders stay aligned for any task
-name. The padded fields are cached per menu index (`_name_field_cache`) —
-measuring them on every redraw was the dominant cost.
-
-**Themes:**
-
-- CYBER: Neon colors (high contrast)
-- MONO: Black & white
-- DARK: Dark theme
-- LIGHT: Light theme
+`init_terminal_capabilities` caches `tput` results in `TPUT_*`. `display_width`
+and `fit_to_width` measure UTF-8 text in terminal columns (CJK/emoji = 2).
+`read_key` / `read_key_raw` / `read_key_optional` implement non-blocking key
+input on Bash 3.2; all `stty`/`tput` calls are failure-tolerant.
 
 ---
 
-### 6. Caching System
-
-**Lines:** 2400-2500
-
-**Purpose:** Speed up repeated menu loads
-
-```bash
-# Cache behavior
-1. Load profile from cache if fresh (TTL configurable)
-2. On task change: invalidate cache
-3. TTL default: 60 seconds
-
-# Environment control
-export RUN_CACHE_PROFILES=1    # Enable caching
-export RUN_CACHE_TTL=300       # 5 minutes
-```
-
-**Key functions:**
-
-- `cache_profile()` - Save to cache
-- `load_from_cache()` - Load cached profile
-- `check_cache_validity()` - Check if cache is stale
-- `invalidate_cache()` - Clear cache
-
----
-
-### 7. Multi-Profile Execution
-
-**Lines:** 1317-1420 (Feature 2)
-
-**Purpose:** Run same task across multiple profiles simultaneously
-
-```bash
-# Usage
-run --across profile1,profile2,profile3 taskname
-
-# Execution modes
-Sequential (default):
-  1. Load profile1, run taskname
-  2. Load profile2, run taskname
-  3. Load profile3, run taskname
-
-Parallel (RUN_PARALLEL_MULTI=1):
-  1. Load all profiles simultaneously
-  2. Run taskname in each profile in parallel
-  3. Aggregate results
-```
-
-**Key functions:**
-
-- `execute_multi_profile_task()` - Orchestrate multi-profile execution
-- `_execute_profile_callback()` - Single profile executor
-- `aggregate_results()` - Combine results
-
----
-
-## Execution Flow
-
-### Diagram: User Input to Task Execution
-
-```
-┌─────────────────────────────────────────┐
-│ User runs: run profile filter           │
-└──────────────────┬──────────────────────┘
-                   ↓
-        ┌──────────────────────┐
-        │  Parse CLI arguments │
-        └──────────────┬───────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │ Load profile (.tasks or .tasks.X) │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────┐
-        │  Parse task lines        │
-        │  (LEVEL|NAME|CMD|DESC)   │
-        └──────────────┬───────────┘
-                       ↓
-        ┌──────────────────────────────┐
-        │  Apply filtering/search       │
-        └──────────────┬───────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Render interactive menu         │
-        │  (Display task list with colors) │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Wait for user input             │
-        │  (Arrow keys, number, search)    │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Resolve dependencies            │
-        │  (If task has depends:X,Y,Z)     │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Execute task(s)                 │
-        │  (Direct bash execution)         │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Detect progress markers         │
-        │  ([progress:X%] or [progress:X/Y])│
-        │  Render progress bar if found    │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Capture output & errors         │
-        │  Display to user                 │
-        └──────────────┬───────────────────┘
-                       ↓
-        ┌──────────────────────────────────┐
-        │  Report status & timing          │
-        │  Ask for next action             │
-        └──────────────────────────────────┘
-```
-
-### Key Function Sequence
-
-```bash
-main()
-  setup_signal_handlers()        # Ctrl+C handling
-  initialize_environment()       # Color, paths, etc
-  load_profiles()                # Find & load .tasks files
-
-  while true; do
-    render_menu()                # Display menu
-    handle_input()               # Get user choice
-
-    if [[ task_selected ]]; then
-      resolve_dependencies()     # Build execution chain
-      execute_task()             # Run task + dependents
-      wait_for_completion()      # Show results
-    fi
-  done
-```
-
-### Task Execution Guarantees
-
-`run_task_streamed()` (`12-execution.sh`) is the single entry point for
-running a task. It guarantees that the menu always comes back:
+## Task Execution Guarantees
 
 | Guarantee | Implementation |
 |-----------|----------------|
-| **Ctrl+C stops the task** | The command runs in the *foreground* and the menu uses `trap ':' INT`. Bash sets `SIGINT` to *ignore* for background jobs and passes an *ignored* signal on to children — both would make the task unstoppable. |
-| **The menu never waits forever** | The menu waits for the *process*, not for the end of the output pipe. A task that leaves a background process behind (`cmd &`, a release script starting a server) keeps the pipe open forever. |
-| **The timeout works everywhere** | macOS ships no `timeout` binary, so a watchdog kills the command after `TIMEOUT=` seconds (default 300) and reports exit code 124. |
-| **Output stays live** | The output travels through a FIFO: the reader streams it to the terminal and the log file while the command runs. |
-| **The terminal is restored** | `stty sane` + cursor reset in the EXIT trap, even after a crash. |
+| Ctrl+C stops the task, not the menu | Foreground command + `trap ':' INT`; children inherit the default disposition |
+| The menu always returns | Wait for the process, not for EOF of the output pipe |
+| Timeout works on macOS | `run_task_streamed` watchdog instead of GNU `timeout`; exit code 124 |
+| Output stays live | FIFO reader streams to terminal and log simultaneously |
+| Terminal is restored | `stty sane` + `restore_term` in the EXIT/INT traps |
+| No state loss under concurrency | `append_line` lock, PID-scoped temp files |
+| `.env` cannot hijack the runner | `_run_env_guard` restores/unsets dangerous names |
 
 ---
 
-## Feature Deep Dives
+## Function Index
 
-### Feature 1: Progress Bar
+All top-level functions, grouped by module. `_grep` is defined conditionally
+(rg or grep) and behaves the same for callers.
 
-**Implementation:** Lines 87-136, 2197-2220
-
-**Detection Mechanism:**
-
-```bash
-# Task outputs this
-echo "[progress:50%]"        # 50%
-echo "[progress:25/100]"     # 25 out of 100
-
-# run.sh detects via regex
-if [[ "$line" =~ \[progress:([0-9]+)%\] ]]; then
-    local percent="${BASH_REMATCH[1]}"
-    render_progress_bar "$percent"
-fi
-```
-
-**Rendering:**
-
-```bash
-render_progress_bar() {
-    local percent=$1
-    local width=${2:-30}
-    local filled=$((percent * width / 100))
-    local empty=$((width - filled))
-
-    printf "%s[" "$COLOR_SEL"           # Open bracket
-    printf "%0.s=" $(seq 1 "$filled")   # Filled portion
-    printf "%0.s-" $(seq 1 "$empty")    # Empty portion
-    printf "] %3d%%${COLOR_RESET}" "$percent"
-}
-```
-
-**Output:**
-
-```
-[============================------] 50%
-```
-
----
-
-### Feature 2: Multi-Profile Parallel
-
-**Implementation:** Lines 1317-1420, CLI parser 2619-2630
-
-**Execution Modes:**
-
-```bash
-# Sequential (safe)
-export RUN_PARALLEL_MULTI=0
-run --across auth,api,worker deploy
-# Result:
-# - Deploy auth (finish)
-# - Deploy api (finish)
-# - Deploy worker (finish)
-
-# Parallel (fast)
-export RUN_PARALLEL_MULTI=1
-run --across auth,api,worker deploy
-# Result:
-# - Deploy auth (background)
-# - Deploy api (background)
-# - Deploy worker (background)
-# - Wait for all to complete
-# - Show aggregated results
-```
-
-**Implementation Detail:**
-
-```bash
-execute_multi_profile_task() {
-    local task_name="$1"
-    local profiles_str="$2"  # "auth,api,worker"
-
-    if [[ "$RUN_PARALLEL_MULTI" == "1" ]]; then
-        # Parallel execution
-        _execute_profile_callback "$profile" "$task_name" &
-        # ...repeat for each...
-        wait    # Wait all background jobs
-    else
-        # Sequential
-        _execute_profile_callback "$profile" "$task_name"
-        # ...repeat for each...
-    fi
-}
-```
+| Module | Functions |
+|--------|-----------|
+| `00-header.sh` | (global constants only) |
+| `01-config.sh` | parse_config_vars, get_local_settings_path, parse_settings_file, resolve_settings, load_settings, save_settings, detect_config_files, merge_configs, _build_all_tasks, get_all_tasks, file_sha256 |
+| `02-utils.sh` | _grep, config_dir_of, cleanup_terminal, handle_interrupt, hide_cursor, warn, error, success, sanitize_filename, _lock_acquire, _lock_release, _trim_file_to_lines, trim_file_to_lines, append_line, trim_whitespace, split_task_line, is_meta_task_line, get_file_stamp, get_files_stamp, get_file_id, split_by_char, save_shell_opts, restore_shell_opts, hash_string, is_uint, selection_index, copy_to_clipboard, validate_filename |
+| `03-terminal.sh` | save_terminal_state, restore_terminal_state, restore_term, check_interactive, check_ssh_session, init_context, build_border_strings, _u8_width, _u8_decode, display_width, fit_to_width, separator_line, init_terminal_capabilities, consume_keypress, set_raw_mode, drain_stdin, restore_int_trap, run_external_editor, read_key, read_key_raw, read_key_optional, print_ssh_hint, msg |
+| `04-themes.sh` | apply_theme, show_spinner, stop_spinner |
+| `05-cache.sh` | get_cache_file, save_state, load_state, cleanup_wrapper |
+| `06-profiles.sh` | find_local_config, find_named_config, list_available_profiles, init_profile, validate_config_file, _json_escape, list_profiles_all, load_profile_config, validate_profile, select_profile_menu |
+| `07-search.sh` | save_search_term, get_search_history, interactive_search |
+| `08-tags.sh` | extract_tags, has_tag, get_all_tags, show_tag_menu |
+| `09-favorites.sh` | is_favorite, toggle_favorite, show_favorites, _execute_fav_callback |
+| `10-logs.sh` | add_to_history, show_history, add_to_recent, show_recent, _run_recent_task, _execute_recent_callback, show_logs |
+| `11-dependencies.sh` | parse_task_deps, execute_task_deps, _execute_dep_callback, _execute_dep_callback_quiet, execute_multi_profile_task, _execute_profile_callback, analyze_project, find_task_in_menu, preview_task |
+| `12-execution.sh` | select_dropdown, render_progress_bar, process_progress_output, _execute_pipeline_callback, _run_env_guard, kill_children, _kill_parallel_tasks, _kill_process_tree, run_task_streamed, execute_task_pipeline, execute_tasks_parallel, resolve_placeholders, execute_task, execute_task_quiet, cli_match_tasks, cli_run_task, cli_list_tasks, load_global_vars, load_task_vars, create_log_file, task_timeout_for_desc, extract_field_from_grep |
+| `13-ui.sh` | clamp_selected_index, _menu_config_stamp, invalidate_menu_cache, calculate_layout, show_help_panel, get_menu_options, _build_menu_options, draw_menu, print_task_list, _reload_menu, _reinit_menu, run_with_term_paused, main_interactive_loop |
+| `14-browser.sh` | file_browser |
+| `15-editor.sh` | edit_config_menu, show_alias_editor, load_aliases, resolve_alias, settings_menu |
+| `16-main.sh` | self_update, _package_json_scripts, smart_init |
 
 ---
 
 ## Contributing Guide
 
-### Setting Up Development Environment
+### Setup
 
 ```bash
-# Clone repo
-git clone https://github.com/yourusername/shell-menu-runner
+git clone https://github.com/MarioPeters/shell-menu-runner
 cd shell-menu-runner
-
-# Build from source
-./build.sh --all       # Concatenates src/ → run.sh
-make dev               # Build dev version (dist/run-dev.sh)
-
-# Verify setup
-bash run.sh --help
-shellcheck run.sh      # Should be 0 errors, 0 warnings
-bash -n run.sh         # Syntax check
-
-# Create test profile
-echo "0|Test|echo hello|Test task" > .tasks
-./run.sh               # Should load menu
+./build.sh              # regenerate run.sh
+make dev                # build dist/run-dev.sh
+make check              # tests + shellcheck
 ```
 
-### Code Style
+### Code style
 
-**Bash Style Guide:** Google Shell Style Guide
+- Bash 3.2 compatible; no associative arrays, no `${var,,}`.
+- Quote expansions, use `${VAR:-}`, handle failing commands with `|| true`.
+- Use `[[ ]]` for conditionals and `printf` instead of `echo` for data.
+- Function names `snake_case`; global constants `UPPER_CASE`.
+- Never use `eval` for function dispatch; call the function directly.
+- Temporary files belong in `$CACHE_DIR`; persistent state in `$RUN_CACHE_DIR`.
 
-**Key rules:**
+### Adding a feature
 
-- Use `local` for function variables
-- Quote variables: `"$var"` not `$var`
-- Use `[[` for conditionals, not `[`
-- Use `printf` not `echo` for portability
-- Function names: `snake_case`
-- Variable names: `UPPER_CASE` for globals, `lower_case` for locals
-
-**Example:**
-
-```bash
-# ✅ Good
-my_function() {
-    local user_input="$1"
-    local output
-
-    if [[ -n "$user_input" ]]; then
-        output=$(process "$user_input")
-        printf "%s\n" "$output"
-    fi
-}
-
-# ❌ Bad
-my_function() {
-    user_input=$1              # Missing quotes, local
-    echo $(process $user_input) # Should use printf, quote
-}
-```
-
----
-
-### Adding New Features
-
-**Step 1: Create feature branch**
-
-```bash
-git checkout -b feature/my-feature
-```
-
-**Step 2: Implement in the appropriate `src/` module**
-
-See the [File Structure](#file-structure) above for which module owns which responsibility. Never edit `run.sh` directly — it is generated.
-
-```bash
-# Add helper function in e.g. src/02-utils.sh
-my_feature_helper() {
-    local arg=$1
-    # Implementation
-}
-
-# Rebuild to propagate the change
-./build.sh --all
-```
-
-**Step 3: Add CLI flag if needed**
-
-```bash
-# In src/16-main.sh — argument parser section
---my-flag)
-    my_feature_helper "$1"
-    shift
-    ;;
-```
-
-**Step 4: Testing**
-
-```bash
-./build.sh --all         # Rebuild after every edit
-bash -n run.sh           # Syntax check
-shellcheck run.sh        # Linting (0 errors expected)
-make check               # Full test + lint
-```
-
-**Step 5: Documentation**
-
-```bash
-# Update README.md with feature description
-# Update ADVANCED_USAGE.md with usage examples
-# Create example in docs/examples/ if applicable
-```
-
-**Step 6: Submit PR**
-
-```bash
-git add src/ run.sh README.md docs/
-git commit -m "feat: add my feature"
-git push origin feature/my-feature
-# Submit PR on GitHub
-```
-
----
-
-### Function Organization
-
-**Modules in `src/`** (see [File Structure](#file-structure) for the full table):
-
-| Module | Responsibility |
-|--------|----------------|
-| `02-utils.sh` | Shared helpers (`trim_file_to_lines`, `get_realpath`, …) |
-| `03-terminal.sh` | Terminal caps, `init_context`, `build_border_strings`, UTF-8 display width (`display_width`, `fit_to_width`) |
-| `12-execution.sh` | `execute_task`, `run_task_streamed` (timeout + Ctrl+C), `cli_list_tasks`, `cli_run_task` |
-| `13-ui.sh` | `main_interactive_loop`, `draw_menu`, `_reload_menu` |
-| `16-main.sh` | `main()`, CLI arg parser |
+1. Implement it in the appropriate `src/` module.
+2. Add a regression test in `build-platform/tests/test-runner.sh`.
+3. Document the flag/key/helper in `docs/CLI_REFERENCE.md`,
+   `docs/KEYBOARD_SHORTCUTS.md` or `docs/ARCHITECTURE.md` as applicable.
+4. Rebuild with `./build.sh && make dev`.
+5. Run `shellcheck -x run.sh build.sh install.sh` and
+   `bash build-platform/tests/test-runner.sh`.
+6. Never edit generated files (`run.sh`, `run.min.sh`, `dist/*`).
 
 ---
 
 ## Development Workflow
 
-### Adding a Bug Fix
+### Bug fixes
 
-1. **Identify the problem** (use `run --debug` for help)
-2. **Create test case** (in .tasks file)
-3. **Fix in the appropriate `src/` module** (smallest change possible)
-4. **Rebuild:** `./build.sh --all`
-5. **Verify fix** (`bash -n run.sh`, `shellcheck run.sh`, manual test)
-6. **Commit** with clear message
+1. Reproduce the bug with the smallest possible config/script.
+2. Fix it in `src/`, not in `run.sh`.
+3. Add a regression test that fails without the fix.
+4. Rebuild, lint and run the full suite.
+5. Update the docs if behavior or documented syntax changed.
 
-### Adding a Feature
-
-1. **Design** (discuss in issue)
-2. **Implement** (add helper functions)
-3. **Test** (create examples)
-4. **Document** (README + examples)
-5. **Submit PR** with tests
-
-### Performance Optimization
-
-1. **Profile** (identify slow section)
-2. **Optimize** (reduce operations)
-3. **Benchmark** (time before/after)
-4. **Document** (update ADVANCED_USAGE)
-
----
-
-### Debugging Tips
+### Debugging
 
 ```bash
-# Enable verbose output
-bash -x run.sh
-
-# Trace specific function
-bash -x run.sh --validate
-
-# Debug variable contents
-set -x
-my_function
-set +x
-
-# Check function definition
-declare -f function_name
-
-# List all functions
-declare -F | awk '{print $3}'
+bash -x ./run.sh --validate       # trace a non-interactive path
+DEBUG_MODE=1 ./run.sh --list      # same as --debug
+declare -F                        # list all functions
+stty sane                         # recover a broken terminal
 ```
 
 ---
 
-## Performance Considerations
+## Performance Notes
 
-### Optimization Strategies
-
-1. **Cache profiles** (avoid re-parsing)
-2. **Parallel deps** (run independent tasks together)
-3. **Parallel multi-profile** (execute across profiles)
-4. **Split profiles** (reduce menu size)
-5. **Use lazy-loading** (load on demand)
-6. **No here-strings in loops** — a here-string creates a temp file in Bash 3.2
-   (~130 µs per call). `split_task_line` uses parameter expansion (~10 µs).
-7. **No `tr` per line** — `shopt -s nocasematch` instead of a fork per entry.
-8. **Cache the padded name fields** — the display width is measured once per
-   menu entry, not on every redraw.
-
-### Benchmark Results
-
-```bash
-# Load time with caching
-Without cache: 0.8s
-With cache:    0.1s → 8x faster
-
-# Dependency execution (10 tasks, 3 levels)
-Sequential: 10s
-Parallel:   3s → 3x faster
-
-# Multi-profile (3 profiles)
-Sequential: 15s
-Parallel:   5s → 3x faster
-
-# 100 tasks in .tasks (macOS, Bash 3.2)
-Menu reload (get_menu_options):  34ms → 23ms
-CLI --list:                       75ms → 55ms
-CLI --run <name>:                468ms → 130ms  (3.6x)
-```
+- `_build_menu_options` and `_build_all_tasks` cache the parsed arrays; call
+  both in-process so the cache variables survive.
+- The change stamp covers config and overlays; explicit edits also call
+  `invalidate_menu_cache`.
+- `split_task_line` avoids here-strings in hot loops (Bash 3.2 creates a temp
+  file per here-string, ~130 µs vs ~10 µs for parameter expansion).
+- `display_width` results for menu entries are cached per index.
+- Search and tag comparisons use literal Bash patterns and `nocasematch`
+  instead of a `tr` fork per line.
+- `_grep` prefers ripgrep and falls back to grep; patterns are passed as
+  `-e <pattern> -- <file>` so a leading `-` is never an option.
 
 ---
 
 ## Testing Checklist
 
-Before submitting PR:
-
 ```bash
-✅ Build clean:         ./build.sh --all
-✅ Syntax valid:        bash -n run.sh
-✅ No lint warnings:    shellcheck run.sh
-✅ Help works:          run --help
-✅ Validation works:    run --validate .tasks
-✅ Menu renders:        run (manual test)
-✅ Tasks execute:       run task-name
-✅ Dependencies work:   Create .tasks with depends:
-✅ Profiles load:       Create .tasks.test, run test
-✅ Parallel works:      RUN_PARALLEL_DEPS=1 run
-✅ Multi-profile works: run --across profile1,profile2 task
-✅ No regressions:      All existing features still work
-✅ No TTY works:        echo 1 | run            (task list + execution)
-✅ Ctrl+C stops a task: run → start a long task → Ctrl+C → menu returns
-✅ Timeout works:       TIMEOUT=5 + a 30s task → killed after 5s
-✅ Terminal restored:   after every exit the shell echoes and edits normally
+./build.sh                          # regenerate run.sh
+bash -n run.sh                      # syntax
+shellcheck -x run.sh build.sh install.sh
+bash build-platform/tests/test-runner.sh
+bash build-platform/tests/test-docs.sh
 ```
 
----
+Manual smoke tests:
 
-## Release Process
-
-See [scripts/release.sh](../../scripts/release.sh)
-
-```bash
-./scripts/release.sh --bump major   # 1.x.y → 2.0.0
-./scripts/release.sh --bump minor   # 1.x.y → 1.(x+1).0
-./scripts/release.sh --bump patch   # 1.x.y → 1.x.(y+1)
-./scripts/release.sh --dry-run --bump major  # Preview without changes
-# Steps: version bump in src/00-header.sh → build → SHA256 → CHANGELOG → git tag → push
-```
-
----
-
-## Key Metrics
-
-| Metric                | Value                |
-| --------------------- | -------------------- |
-| Source modules        | 17 (`src/*.sh`)      |
-| Lines of code         | 3900+ (built)        |
-| Functions             | 95+                  |
-| Features              | 30+                  |
-| Profiles              | 18 templates         |
-| Shellcheck score      | 0 errors, 0 warnings |
-| Minimum Bash version  | 3.2+                 |
-| External dependencies | 0                    |
-| Installation size     | ~40KB                |
+- menu renders and arrows/j/k/h/l navigate
+- `/`, `#`, `*`, `r`, `R`, `L`, `!`, `?`, `s`, `e`, `f`, `a`, `g`, `p` work
+- a task with `[!]` asks for confirmation
+- `[depends: Name]` runs the dependency first
+- `[timeout: 2]` kills a long task with exit code 124
+- `run --list`, `run --run 08` and `run --across a,b task` work
+- Ctrl+C stops a task and the menu survives
 
 ---
 
 ## Related Documentation
 
-- [QUICK_START.md](QUICK_START.md) - 5-minute beginner guide
-- [ADVANCED_USAGE.md](ADVANCED_USAGE.md) - Power-user patterns
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Debug guide
-- [README.md](../../README.md) - Feature reference
-
----
-
-**Questions?** Check [TROUBLESHOOTING.md](TROUBLESHOOTING.md#debug-mode) for debug mode tips.
+- [CLI_REFERENCE.md](CLI_REFERENCE.md) — flags and task syntax
+- [KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md) — all keys
+- [ADVANCED_USAGE.md](ADVANCED_USAGE.md) — recipes
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — debugging

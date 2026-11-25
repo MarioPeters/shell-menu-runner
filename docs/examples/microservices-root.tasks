@@ -4,7 +4,7 @@
 
 # Build
 0|Build|SUB|Build services
-1|Build All|run --across auth,api,worker build --parallel|Build all services
+1|Build All|RUN_PARALLEL_MULTI=1 run --across auth,api,worker build|Build all services
 1|Build Auth|run auth build|Build auth service
 1|Build API|run api build|Build API service
 1|Build Worker|run worker build|Build worker service
@@ -12,8 +12,8 @@
 
 # Testing
 0|Testing|SUB|Test services
-1|Test All|run --across auth,api,worker test --parallel|Test all services
-1|Test Coverage|run --across auth,api,worker coverage --parallel|Coverage all
+1|Test All|RUN_PARALLEL_MULTI=1 run --across auth,api,worker test|Test all services
+1|Test Coverage|RUN_PARALLEL_MULTI=1 run --across auth,api,worker coverage|Coverage all
 1|Back|BACK
 
 # Deployment

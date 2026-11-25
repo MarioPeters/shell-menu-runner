@@ -25,13 +25,22 @@ make clean      # Aufräumen
 
 ## 📊 Build-Targets & Sizes
 
-| Target      | Size | Lines | Savings | Beschreibung                |
-| ----------- | ---- | ----- | ------- | --------------------------- |
-| **dev**     | 118K | 3198  | 0%      | Development mit Debug-Mode  |
-| **prod**    | 107K | 2674  | 9%      | Production, Kommentare weg  |
-| **minimal** | 118K | 3198  | 0%      | Core-Features only          |
-| **ultra**   | 94K  | 3199  | 21%     | Whitespace optimiert        |
-| **gzip**    | 23K  | -     | 80%     | Komprimiert (alle Variants) |
+| Target      | Size  | Lines | Savings | Beschreibung                         |
+| ----------- | ----- | ----- | ------- | ------------------------------------ |
+| **dev**     | 227K  | 6068  | 0%      | Development mit Debug-Mode           |
+| **prod**    | 156K  | 4385  | 31%     | Production, Kommentare/Leerzeilen weg |
+| **minimal** | 227K  | 6052  | 0%      | Core-Features via `RUN_MINIMAL=1`    |
+| **ultra**   | 186K  | 6068  | 18%     | Whitespace optimiert                 |
+| **bundle**  | 87K   | 143   | 62%     | Self-extracting bundle               |
+| **gzip**    | 35K   | -     | 85%     | `dist/run-prod.sh.gz`                |
+
+Zusätzlich erzeugt `./build.sh --min` das eigenständige Minified-Artefakt
+`run.min.sh` (156K, 4374 Zeilen, 32% kleiner als `run.sh`). Es wird von
+`make all` **nicht** erzeugt.
+
+`dist/run-dev.sh` ist bewusst **nicht** byte-identisch mit `run.sh`: der
+Dev-Build setzt `DEBUG_MODE=1`. Die beiden Build-Pfade (`build.sh` und
+`builder.sh`) erzeugen ansonsten denselben Code.
 
 ## 🎯 Häufige Aufgaben
 
@@ -69,9 +78,10 @@ make -j4 all    # Baut 4 Targets gleichzeitig
 ### Test-Suite ausführen
 
 ```bash
-make test              # Alle 20+ Tests
-make lint              # ShellCheck Linting
+make test              # Alle 104 Tests
+make lint              # Rebuild + ShellCheck
 make check             # Test + Lint
+bash build-platform/tests/test-docs.sh  # Doku-Konsistenz
 ```
 
 ### Test-Coverage
@@ -80,6 +90,7 @@ make check             # Test + Lint
 - ✅ Integration Tests (Config handling, profiles, task execution)
 - ✅ Performance Tests (Build speed, execution time)
 - ✅ Regression Tests (Bug prevention)
+- ✅ Documentation consistency (helpers, keys, flags, examples, installer templates)
 
 ### Manuelle Tests
 
@@ -148,8 +159,8 @@ make deb              # .deb Package
 make package
 
 # Erstellt:
-# - dist/shell-menu-runner-1.7.0.tar.gz
-# - dist/shell-menu-runner_1.7.0_all.deb
+# - dist/shell-menu-runner-2.1.3.tar.gz
+# - dist/shell-menu-runner_2.1.3_all.deb
 # - dist/SHA256SUMS
 ```
 
@@ -186,7 +197,9 @@ build-platform/
 ├── builder.sh              # Haupt-Orchestrator ⭐
 ├── optimize.sh             # Ultra-Compact Optimizer
 ├── tests/
-│   └── test-runner.sh     # Test-Suite (20+ Tests) ⭐
+│   ├── test-runner.sh     # Behavior suite (104 Tests) ⭐
+│   ├── test-docs.sh       # Documentation consistency
+│   └── pty_driver.py      # PTY helper for interactive tests
 ├── Dockerfile              # Docker Image
 ├── Dockerfile.multistage   # Optimized Docker
 ├── docker-compose.yml      # Dev Environment
@@ -322,4 +335,4 @@ Siehe: [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml)
 **Build-Platform Status:** 🟢 Production-Ready
 
 **Version:** 1.0.0  
-**Letzte Aktualisierung:** 9. Februar 2026
+**Letzte Aktualisierung:** 22. Oktober 2026
