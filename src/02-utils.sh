@@ -270,7 +270,7 @@ get_file_id() {
         elif stat -f '%d:%i' / >/dev/null 2>&1; then
             _STAT_ID_CMD="stat -f %d:%i"
         else
-            _STAT_ID_CMD="stat -c %d:%i"
+            _STAT_ID_CMD="stat -L -c %d:%i"
         fi
     fi
     $_STAT_ID_CMD "$file" 2>/dev/null || echo ""

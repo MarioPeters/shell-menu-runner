@@ -2002,7 +2002,7 @@ test_edit_uses_resolved_config_path() {
     printf '0|Parent|echo parent|Parent config\n' > "$tmp_dir/.tasks"
 
     local output
-    output=$(cd "$tmp_dir/sub" && "$RUN_SCRIPT" --edit < /dev/null 2>&1 || true)
+    output=$(cd "$tmp_dir/sub" && TERM=xterm "$RUN_SCRIPT" --edit < /dev/null 2>&1 || true)
     rm -rf "$tmp_dir"
 
     # Vorher wurde "./.tasks" (eine neue, nicht existierende Datei) geöffnet.
@@ -2058,7 +2058,7 @@ test_kill_children_terminates_the_children() {
         set +e
         source '$ROOT_DIR/src/02-utils.sh' 2>/dev/null
         source '$ROOT_DIR/src/12-execution.sh' 2>/dev/null
-        ( trap '' INT; sleep 30 ) &
+        ( trap '' INT; sleep 30; true ) &
         _w=\$!
         sleep 0.5
         _child=\$(pgrep -P \$_w 2>/dev/null | head -1)
@@ -2094,7 +2094,7 @@ test_task_run_leaves_no_watchdog_behind() {
         CACHE_DIR='$tmp_dir/cache'
         run_task_streamed 'true' '$tmp_dir/task.log' 47 true >/dev/null 2>&1
         sleep 0.5
-        pgrep -f 'sleep 47' 2>/dev/null | wc -l | tr -d ' '
+        pgrep -f 'sleep [4]7' 2>/dev/null | wc -l | tr -d ' '
     " 2>&1 || true)
     rm -rf "$tmp_dir"
 

@@ -20,6 +20,10 @@ readonly CLI_DOC="$ROOT_DIR/docs/CLI_REFERENCE.md"
 readonly KEY_DOC="$ROOT_DIR/docs/KEYBOARD_SHORTCUTS.md"
 readonly COPILOT_FILE="$ROOT_DIR/.github/copilot-instructions.md"
 
+# CLAUDE.md is listed in .gitignore, so it does not exist in a CI checkout.
+DOC_FILES=("$ARCH_FILE")
+if [ -f "$CLAUDE_FILE" ]; then DOC_FILES+=("$CLAUDE_FILE"); fi
+
 C_OK=$'\e[1;32m'; C_FAIL=$'\e[1;31m'; C_RST=$'\e[0m'
 FAILURES=0
 
@@ -46,7 +50,7 @@ has_text() {
 test_documented_helpers_exist() {
     local doc missing=""
     local name
-    for doc in "$CLAUDE_FILE" "$ARCH_FILE"; do
+    for doc in "${DOC_FILES[@]}"; do
         while IFS= read -r name; do
             [ -n "$name" ] || continue
             if ! grep -rqE "^[[:space:]]*${name}\\(\\)" "$SRC_DIR"; then
@@ -69,7 +73,7 @@ test_all_helpers_documented() {
     local missing="" name
     while IFS= read -r name; do
         [ -n "$name" ] || continue
-        if ! grep -Fqw -- "$name" "$CLAUDE_FILE" "$ARCH_FILE"; then
+        if ! grep -Fqw -- "$name" "${DOC_FILES[@]}"; then
             missing="$missing $name"
         fi
     done < <(grep -hoE '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$SRC_DIR"/*.sh \
@@ -213,7 +217,7 @@ test_no_phantom_flags() {
 }
 
 test_no_stale_helper_refs() {
-    local files="$CLAUDE_FILE $COPILOT_FILE $ROOT_DIR/.claude/commands/build.md \
+    local files="$COPILOT_FILE $ROOT_DIR/.claude/commands/build.md \
 $ROOT_DIR/.claude/commands/check-perf.md"
     if grep -nE 'get_file_mtime|context_menu' $files 2>/dev/null; then
         fail "stale helper reference in AI instructions (see matches above)"
@@ -227,6 +231,10 @@ $ROOT_DIR/.claude/commands/check-perf.md"
 # ------------------------------------------------------------------------------
 test_declared_line_count() {
     local declared actual diff
+    if [ ! -f "$CLAUDE_FILE" ]; then
+        pass "CLAUDE.md not present (gitignored) - line count check skipped"
+        return
+    fi
     declared=$(grep -oE '~[0-9]+ lines' "$CLAUDE_FILE" | head -n1 | tr -cd '0-9')
     actual=$(wc -l < "$RUN_SCRIPT" | tr -d ' ')
     if [ -z "$declared" ]; then
