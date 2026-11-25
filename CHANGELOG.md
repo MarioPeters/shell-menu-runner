@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.5] - 2026-11-25
+
+- ci: install zsh for completion check, fix trivy-action version
+
+
+
 ## [2.1.4] - 2026-11-25
 
 - Refactor menu handling and improve caching mechanisms
