@@ -1,6 +1,4 @@
 # Docker Compose for Shell Menu Runner Development
-version: "3.8"
-
 services:
   # Main runner service
   runner:
