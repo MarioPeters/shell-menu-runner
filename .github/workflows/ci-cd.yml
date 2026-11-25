@@ -345,6 +345,9 @@ jobs:
         # into the CI (supply chain risk).
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          # trivy-action v0.36.0 bundles Trivy v0.70.0 by default; pin the
+          # current release explicitly.
+          version: "v0.76.2"
           scan-type: "fs"
           scan-ref: "."
           format: "sarif"
