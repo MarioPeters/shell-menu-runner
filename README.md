@@ -1,6 +1,6 @@
 # 🚀 Shell Menu Runner
 
-![Version](https://img.shields.io/badge/version-2.1.5-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.1.6-blue.svg?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square) ![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?style=flat-square)
 
 [English](#english) | [Deutsch](#deutsch)
 
@@ -9,7 +9,7 @@
 ## 🇺🇸 English
 
 **The Ultimate Task Runner for the Terminal.**
-Version 2.1.5 (Task Tags & Shell Completion). Zero config, Zero dependencies. Runs on Linux and macOS.
+Version 2.1.6 (Task Tags & Shell Completion). Zero config, Zero dependencies. Runs on Linux and macOS.
 
 ### 📸 Screenshot
 
@@ -404,7 +404,7 @@ Pull requests are welcome! Please run `shellcheck` before submitting.
 ## 🇩🇪 Deutsch
 
 **Die Kommandozentrale für dein Terminal.**
-Version 2.1.5 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. Läuft auf Linux und macOS.
+Version 2.1.6 (Task-Tags & Shell-Completion). Zero Config, Zero Dependencies. Läuft auf Linux und macOS.
 
 ### 📸 Screenshot
 

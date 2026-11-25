@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.6] - 2026-11-25
+
+- fix: resolve symlinks in get_file_id on GNU stat; make tests CI-safe
+
+
+
 ## [2.1.5] - 2026-11-25
 
 - ci: install zsh for completion check, fix trivy-action version
