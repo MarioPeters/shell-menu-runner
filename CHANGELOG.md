@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.8] - 2026-11-25
+
+- chore: bump Alpine base image to 3.22, drop obsolete compose version, add Dependabot
+- ci: update Trivy to v0.76.2
+
+
+
 ## [2.1.7] - 2026-11-25
 
 - fix: detect terminal size via stty so wide terminals get more than 2 columns
