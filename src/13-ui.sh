@@ -368,12 +368,12 @@ draw_menu() {
     _redraw_counter=$(( _redraw_counter + 1 ))
     if [ "$_redraw_counter" -ge 20 ]; then
         _redraw_counter=0
-        local _new_cols
-        _new_cols=$(tput cols 2>/dev/null || true)
-        if [ -n "$_new_cols" ] && [ "$_new_cols" != "$TPUT_COLS" ]; then
-            TPUT_COLS="$_new_cols"
+        _detect_term_size
+        if [ "$_TERM_COLS" -ge 1 ] && [ "$_TERM_COLS" != "$TPUT_COLS" ]; then
+            TPUT_COLS="$_TERM_COLS"
             _LAST_COL_WIDTH=0
         fi
+        if [ "$_TERM_LINES" -ge 1 ]; then TPUT_LINES="$_TERM_LINES"; fi
         term_width="${TPUT_COLS:-80}"
     fi
 

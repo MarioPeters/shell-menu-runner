@@ -1217,6 +1217,44 @@ separator_line() {
     printf "%s" "$_out"
 }
 
+# Terminal size -> $_TERM_COLS / $_TERM_LINES (0 = unknown).
+# `tput cols 2>/dev/null` inside $(...) has neither stdout nor stderr on the
+# terminal, so tput cannot query the window and answers with the terminfo
+# default (80) while exiting 0 - the menu then stayed at 2 columns on a wide
+# terminal.  Ask the controlling terminal directly and fall back to tput /
+# $COLUMNS only afterwards.
+_detect_term_size() {
+    _TERM_COLS=0
+    _TERM_LINES=0
+    local _sz="" _l="" _c=""
+    _sz="$(stty size </dev/tty 2>/dev/null || true)"
+    _l="${_sz%% *}"
+    _c="${_sz##* }"
+    if is_uint "$_l" && is_uint "$_c" && [ "$_l" -ge 1 ] && [ "$_c" -ge 1 ]; then
+        _TERM_LINES="$_l"
+        _TERM_COLS="$_c"
+        return 0
+    fi
+    _c=""; _l=""
+    if command -v tput >/dev/null 2>&1; then
+        _c="$(tput cols 2>/dev/null || true)"
+        _l="$(tput lines 2>/dev/null || true)"
+    fi
+    is_uint "$_c" && [ "$_c" -ge 1 ] || _c="${COLUMNS:-0}"
+    is_uint "$_l" && [ "$_l" -ge 1 ] || _l="${LINES:-0}"
+    is_uint "$_c" && _TERM_COLS="$_c"
+    is_uint "$_l" && _TERM_LINES="$_l"
+    return 0
+}
+
+_on_winch() {
+    _detect_term_size
+    [ "$_TERM_COLS" -ge 1 ] && TPUT_COLS="$_TERM_COLS"
+    [ "$_TERM_LINES" -ge 1 ] && TPUT_LINES="$_TERM_LINES"
+    _LAST_COL_WIDTH=0
+    return 0
+}
+
 # Optimized terminal capability caching
 _TPUT_INITIALIZED=0
 init_terminal_capabilities() {
@@ -1233,20 +1271,23 @@ init_terminal_capabilities() {
         TPUT_CIVIS="$(tput civis 2>/dev/null || true)"
         TPUT_CNORM="$(tput cnorm 2>/dev/null || true)"
         TPUT_ED="$(tput ed 2>/dev/null || true)"
-        TPUT_COLS="$(tput cols 2>/dev/null || true)"
-        TPUT_LINES="$(tput lines 2>/dev/null || true)"
         HAS_TPUT=1
     else
         HAS_TPUT=0
         TPUT_COLS=80
         TPUT_LINES=24
     fi
+    if [ "$HAS_TPUT" -eq 1 ]; then
+        _detect_term_size
+        TPUT_COLS="$_TERM_COLS"
+        TPUT_LINES="$_TERM_LINES"
+    fi
     # Fallbacks for terminfo entries that do not exist (dumb terminals)
     is_uint "${TPUT_COLS:-}" && [ "${TPUT_COLS:-0}" -ge 1 ] || TPUT_COLS=80
     is_uint "${TPUT_LINES:-}" && [ "${TPUT_LINES:-0}" -ge 1 ] || TPUT_LINES=24
 
     # Update cols/lines on resize, reset border cache
-    trap 'TPUT_COLS=$(tput cols 2>/dev/null || echo 80); TPUT_LINES=$(tput lines 2>/dev/null || echo 24); _LAST_COL_WIDTH=0' WINCH
+    trap '_on_winch' WINCH
 
     # Context indicator (git branch, hostname, env)
     init_context
@@ -4608,12 +4649,12 @@ draw_menu() {
     _redraw_counter=$(( _redraw_counter + 1 ))
     if [ "$_redraw_counter" -ge 20 ]; then
         _redraw_counter=0
-        local _new_cols
-        _new_cols=$(tput cols 2>/dev/null || true)
-        if [ -n "$_new_cols" ] && [ "$_new_cols" != "$TPUT_COLS" ]; then
-            TPUT_COLS="$_new_cols"
+        _detect_term_size
+        if [ "$_TERM_COLS" -ge 1 ] && [ "$_TERM_COLS" != "$TPUT_COLS" ]; then
+            TPUT_COLS="$_TERM_COLS"
             _LAST_COL_WIDTH=0
         fi
+        if [ "$_TERM_LINES" -ge 1 ]; then TPUT_LINES="$_TERM_LINES"; fi
         term_width="${TPUT_COLS:-80}"
     fi
 

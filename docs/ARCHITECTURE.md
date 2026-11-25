@@ -209,7 +209,11 @@ survives.
 
 ### Terminal and display
 
-`init_terminal_capabilities` caches `tput` results in `TPUT_*`. `display_width`
+`init_terminal_capabilities` caches `tput` results in `TPUT_*`. The window size
+comes from `_detect_term_size` (`stty size </dev/tty`, then `tput`, then
+`$COLUMNS`/`$LINES`): `tput cols 2>/dev/null` inside `$(...)` cannot see the
+terminal and reports the terminfo default of 80. `_on_winch` refreshes it on
+resize. `display_width`
 and `fit_to_width` measure UTF-8 text in terminal columns (CJK/emoji = 2).
 `read_key` / `read_key_raw` / `read_key_optional` implement non-blocking key
 input on Bash 3.2; all `stty`/`tput` calls are failure-tolerant.
@@ -240,7 +244,7 @@ All top-level functions, grouped by module. `_grep` is defined conditionally
 | `00-header.sh` | (global constants only) |
 | `01-config.sh` | parse_config_vars, get_local_settings_path, parse_settings_file, resolve_settings, load_settings, save_settings, detect_config_files, merge_configs, _build_all_tasks, get_all_tasks, file_sha256 |
 | `02-utils.sh` | _grep, config_dir_of, cleanup_terminal, handle_interrupt, hide_cursor, warn, error, success, sanitize_filename, _lock_acquire, _lock_release, _trim_file_to_lines, trim_file_to_lines, append_line, trim_whitespace, split_task_line, is_meta_task_line, get_file_stamp, get_files_stamp, get_file_id, split_by_char, save_shell_opts, restore_shell_opts, hash_string, is_uint, selection_index, copy_to_clipboard, validate_filename |
-| `03-terminal.sh` | save_terminal_state, restore_terminal_state, restore_term, check_interactive, check_ssh_session, init_context, build_border_strings, _u8_width, _u8_decode, display_width, fit_to_width, separator_line, init_terminal_capabilities, consume_keypress, set_raw_mode, drain_stdin, restore_int_trap, run_external_editor, read_key, read_key_raw, read_key_optional, print_ssh_hint, msg |
+| `03-terminal.sh` | save_terminal_state, restore_terminal_state, restore_term, check_interactive, check_ssh_session, init_context, build_border_strings, _u8_width, _u8_decode, display_width, fit_to_width, separator_line, init_terminal_capabilities, _detect_term_size, _on_winch, consume_keypress, set_raw_mode, drain_stdin, restore_int_trap, run_external_editor, read_key, read_key_raw, read_key_optional, print_ssh_hint, msg |
 | `04-themes.sh` | apply_theme, show_spinner, stop_spinner |
 | `05-cache.sh` | get_cache_file, save_state, load_state, cleanup_wrapper |
 | `06-profiles.sh` | find_local_config, find_named_config, list_available_profiles, init_profile, validate_config_file, _json_escape, list_profiles_all, load_profile_config, validate_profile, select_profile_menu |
