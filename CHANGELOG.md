@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.4] - 2026-11-25
+
+- Refactor menu handling and improve caching mechanisms
+- refactor: performance rework of the menu engine, zsh compatibility fixes
+
+
+
 ## [2.1.3] - 2026-09-18
 
 - Refactor configuration and task management
