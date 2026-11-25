@@ -39,6 +39,9 @@ jobs:
         run: |
           shellcheck -x run.sh build.sh install.sh
 
+      - name: Install zsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+
       - name: Check zsh completion syntax
         run: |
           # The completion is zsh-only code (glob qualifiers, zsh modifiers) —
@@ -340,7 +343,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         # Pinned to a released version — "@master" would pull unreviewed code
         # into the CI (supply chain risk).
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
